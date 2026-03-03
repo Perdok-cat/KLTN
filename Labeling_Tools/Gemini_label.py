@@ -4,14 +4,15 @@ import os
 import time
 from typing import Dict, List
 import json
+import re
 
 # Cấu hình Gemini API
 # Lấy API key từ biến môi trường hoặc thay trực tiếp
-API_KEY = os.getenv("GEMINI_API_KEY", "YOUR_API_KEY_HERE")
+API_KEY = "AIzaSyC7iFR_9v7VdzecjWOcA4juvC1yKhum7iM" #os.getenv("GEMINI_API_KEY", "YOUR_API_KEY_HERE")
 genai.configure(api_key=API_KEY)
 
 # Khởi tạo model
-model = genai.GenerativeModel('gemini-1.5-flash')
+model = genai.GenerativeModel('gemini-2.5-flash-lite')
 
 # Định nghĩa các nhãn và tiêu chí
 LABELS = {
@@ -162,14 +163,35 @@ def label_with_gemini(title: str, content: str, max_retries: int = 3) -> Dict:
                 pass
                 
         except Exception as e:
-            print(f"Lỗi khi gọi Gemini API (lần {attempt + 1}/{max_retries}): {str(e)}")
-            if attempt < max_retries - 1:
-                time.sleep(2 ** attempt)  # Exponential backoff
+            error_msg = str(e)
+            print(f"Lỗi khi gọi Gemini API (lần {attempt + 1}/{max_retries}): {error_msg}")
+            
+            # Xử lý đặc biệt cho rate limit error (429)
+            if "429" in error_msg or "quota" in error_msg.lower() or "rate" in error_msg.lower():
+                # Parse retry delay từ error message
+                retry_delay = 7  # Default 7 giây
+                if "retry in" in error_msg.lower():
+                    try:
+                        # Tìm số giây trong message (vd: "Please retry in 6.30473889s")
+                        import re
+                        match = re.search(r'retry in ([\d.]+)s', error_msg)
+                        if match:
+                            retry_delay = float(match.group(1)) + 1  # Thêm 1 giây buffer
+                    except:
+                        pass
+                
+                print(f"⏳ Rate limit reached. Đợi {retry_delay:.1f} giây trước khi retry...")
+                time.sleep(retry_delay)
+            elif attempt < max_retries - 1:
+                # Exponential backoff cho các lỗi khác
+                wait_time = 2 ** attempt
+                print(f"⏳ Đợi {wait_time} giây trước khi retry...")
+                time.sleep(wait_time)
             else:
                 return {
                     "label": "NOISE",
                     "confidence": "low",
-                    "reasoning": f"API Error: {str(e)}"
+                    "reasoning": f"API Error: {error_msg[:200]}"
                 }
     
     return {
@@ -178,8 +200,16 @@ def label_with_gemini(title: str, content: str, max_retries: int = 3) -> Dict:
         "reasoning": "Failed after retries"
     }
 
-def process_csv(input_file: str, output_file: str, start_idx: int = 0, batch_size: int = 10):
-    """Xử lý file CSV và gán nhãn"""
+def process_csv(input_file: str, output_file: str, start_idx: int = 0, batch_size: int = 10, delay_seconds: float = 7.0):
+    """Xử lý file CSV và gán nhãn
+    
+    Args:
+        input_file: Đường dẫn file CSV đầu vào
+        output_file: Đường dẫn file CSV đầu ra
+        start_idx: Index bắt đầu xử lý
+        batch_size: Số bài viết trong mỗi batch
+        delay_seconds: Thời gian chờ giữa các request (mặc định 7 giây cho free tier)
+    """
     
     print(f"Đang đọc file: {input_file}")
     df = pd.read_csv(input_file)
@@ -247,8 +277,11 @@ def process_csv(input_file: str, output_file: str, start_idx: int = 0, batch_siz
                     percentage = (count / total_processed * 100) if total_processed > 0 else 0
                     print(f"   {label}: {count} ({percentage:.1f}%)")
             
-            # Rate limiting
-            time.sleep(1)  # Tránh hit rate limit của Gemini API
+            # Rate limiting: Free tier cho phép 10 requests/phút = 1 request mỗi 6 giây
+            # Dùng delay_seconds (mặc định 7 giây) để an toàn
+            if idx < len(df) - 1:  # Không cần sleep cho bài cuối cùng
+                print(f"    ⏳ Đợi {delay_seconds} giây để tránh rate limit...")
+                time.sleep(delay_seconds)
     
     print(f"\n{'='*60}")
     print("✅ HOÀN THÀNH!")
@@ -314,12 +347,18 @@ def main():
     print(f"\n📂 File đầu vào: {input_file}")
     print(f"📂 File đầu ra: {output_file}")
     
+    print("\n⚙️  Cấu hình:")
+    print(f"   - Batch size: 3 bài viết/batch")
+    print(f"   - Delay: 7 giây giữa các request (Free tier: 10 requests/phút)")
+    print(f"   - Max retries: 3 lần/request")
+    
     # Xử lý
     df = process_csv(
         input_file=input_file,
         output_file=output_file,
         start_idx=0,  # Bắt đầu từ đầu
-        batch_size=5   # Xử lý 5 bài viết rồi lưu checkpoint
+        batch_size=3,   # Xử lý 3 bài viết rồi lưu checkpoint
+        delay_seconds=7.0  # 7 giây giữa các request (Free tier: 10 req/phút)
     )
     
     # Hiển thị thống kê

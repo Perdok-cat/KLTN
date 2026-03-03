@@ -267,9 +267,9 @@ def crawl_article_content(url):
 
 def main():
     # Đọc file CSV hiện có
-    input_file = "du_lieu_ai_gan_nhan.csv"
-    output_file = "du_lieu_ai_day_du.csv"
-    backup_file = "du_lieu_ai_day_du_backup.csv"
+    input_file = "data_link.csv"
+    output_file = "data_2_3_2026.csv"
+    backup_file = "backup_data_2_3_2026.csv"
     
     print(f"Đang đọc file: {input_file}")
     df = pd.read_csv(input_file)
@@ -353,3 +353,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    

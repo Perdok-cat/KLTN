@@ -44,7 +44,24 @@ rss_urls = [
     "https://news.google.com/rss/search?q=Trí+tuệ+nhân+tạo+OR+AI+OR+LLM&hl=vi-VN&gl=VN&ceid=VN:vi",
     "https://news.google.com/rss/search?q=Nvidia+OR+Chip+OR+Bán+dẫn&hl=vi-VN&gl=VN&ceid=VN:vi",
     "https://news.google.com/rss/search?q=ChatGPT+OR+Gemini+OR+OpenAI&hl=vi-VN&gl=VN&ceid=VN:vi"
-]
+    "https://news.google.com/rss/search?q=LLM+OR+%22Large+Language+Model%22+OR+%22Mô+hình+ngôn+ngữ+lớn%22+OR+Transformer&hl=vi-VN&gl=VN&ceid=VN:vi",
+"https://news.google.com/rss/search?q=GPT-5+OR+Claude+4+OR+Gemini+2.0+OR+Llama+4+OR+Mistral&hl=vi-VN&gl=VN&ceid=VN:vi",
+"https://news.google.com/rss/search?q=Multimodal+AI+OR+%22AI+đa+phương+thức%22+OR+Sora+OR+Video+Gen+AI&hl=vi-VN&gl=VN&ceid=VN:vi"
+"https://news.google.com/rss/search?q=OpenAI+OR+Anthropic+OR+Google+DeepMind+OR+Microsoft+AI&hl=vi-VN&gl=VN&ceid=VN:vi",
+"https://news.google.com/rss/search?q=Elon+Musk+xAI+OR+Grok+OR+Meta+AI+OR+Yann+LeCun&hl=vi-VN&gl=VN&ceid=VN:vi",
+"https://news.google.com/rss/search?q=Sam+Altman+OR+Dario+Amodei+OR+Demis+Hassabis&hl=vi-VN&gl=VN&ceid=VN:vi"
+"https://news.google.com/rss/search?q=Nvidia+Blackwell+OR+B200+OR+H200+OR+%22GPU+AI%22&hl=vi-VN&gl=VN&ceid=VN:vi",
+"https://news.google.com/rss/search?q=Groq+OR+TPU+OR+NPU+OR+%22Chip+AI%22+OR+%22Bán+dẫn+cho+AI%22&hl=vi-VN&gl=VN&ceid=VN:vi",
+"https://news.google.com/rss/search?q=%22AI+Data+Center%22+OR+%22Trung+tâm+dữ+liệu+AI%22+OR+%22Hạ+tầng+tính+toán%22&hl=vi-VN&gl=VN&ceid=VN:vi"
+"https://news.google.com/rss/search?q=%22AI+Agent%22+OR+%22Agentic+AI%22+OR+%22AI+tự+hành%22+OR+AutoGPT&hl=vi-VN&gl=VN&ceid=VN:vi",
+"https://news.google.com/rss/search?q=%22AI+coding%22+OR+GitHub+Copilot+OR+Cursor+AI+OR+Devin+AI&hl=vi-VN&gl=VN&ceid=VN:vi",
+"https://news.google.com/rss/search?q=%22AI+trong+y+tế%22+OR+%22AI+trong+tài+chính%22+OR+%22AI+giáo+dục%22&hl=vi-VN&gl=VN&ceid=VN:vi"
+"https://news.google.com/rss/search?q=%22AI+Ethics%22+OR+%22Đạo+đức+AI%22+OR+%22An+toàn+AI%22+OR+Alignment&hl=vi-VN&gl=VN&ceid=VN:vi",
+"https://news.google.com/rss/search?q=Deepfake+OR+%22AI+lừa+đảo%22+OR+%22Bản+quyền+AI%22+OR+Copyright+AI&hl=vi-VN&gl=VN&ceid=VN:vi",
+"https://news.google.com/rss/search?q=%22Luật+AI%22+OR+%22AI+Act%22+OR+%22Quy+định+về+AI%22&hl=vi-VN&gl=VN&ceid=VN:vi"
+"https://news.google.com/rss/search?q=%22AI+Việt+Nam%22+OR+VinAI+OR+Zalo+AI+OR+Viettel+AI&hl=vi-VN&gl=VN&ceid=VN:vi",
+"https://news.google.com/rss/search?q=%22Chiến+lược+AI+quốc+gia%22+OR+%22Nhân+lực+AI%22+Việt+Nam&hl=vi-VN&gl=VN&ceid=VN:vi"
+]   
 
 ai_keywords = [
     # Cơ bản & Tiếng Việt
@@ -101,11 +118,8 @@ for url in rss_urls:
         # KỸ THUẬT QUAN TRỌNG: Chỉ lấy bài nếu Tiêu đề hoặc Tóm tắt có từ khóa AI
         if is_ai_article(title) or is_ai_article(summary):
             articles.append({
-                "title": title,
-                "summary": summary, # Bạn sẽ dựa vào cái này để gán nhãn
+                "title": title, 
                 "link": link,
-                "published": pub_date,
-                "label": "" # Cột trống để bạn điền tay (0, 1, 2)
             })
         
 # 3. Lưu ra file CSV
@@ -113,9 +127,8 @@ df = pd.DataFrame(articles)
 # Xóa trùng lặp (nếu Google News trỏ về cùng bài với VnExpress)
 df.drop_duplicates(subset=['link'], inplace=True) 
 
-filename = "du_lieu_ai_gan_nhan.csv"
+filename = "data_link.csv"
 df.to_csv(filename, index=False, encoding='utf-8-sig')
 
 print(f"\nĐã hoàn thành! Tìm thấy {len(df)} bài báo liên quan đến AI.")
 print(f"File đã lưu tại: {filename}")
-print("Giờ bạn hãy mở file này lên và điền cột 'label' nhé.")
