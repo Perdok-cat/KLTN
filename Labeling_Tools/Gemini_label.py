@@ -8,11 +8,11 @@ import re
 
 # Cấu hình Gemini API
 # Lấy API key từ biến môi trường hoặc thay trực tiếp
-API_KEY = "AIzaSyC7iFR_9v7VdzecjWOcA4juvC1yKhum7iM" #os.getenv("GEMINI_API_KEY", "YOUR_API_KEY_HERE")
+API_KEY = "" #os.getenv("GEMINI_API_KEY", "YOUR_API_KEY_HERE")
 genai.configure(api_key=API_KEY)
 
 # Khởi tạo model
-model = genai.GenerativeModel('gemini-2.5-flash-lite')
+model = genai.GenerativeModel('gemini-2.5-flash')
 
 # Định nghĩa các nhãn và tiêu chí
 LABELS = {
@@ -93,7 +93,7 @@ def create_labeling_prompt(title: str, content: str) -> str:
 TIÊU ĐỀ: {title}
 
 NỘI DUNG:
-{content[:3000]}  # Giới hạn 3000 ký tự để tiết kiệm token
+{content[:5000]}  # Giới hạn 3000 ký tự để tiết kiệm token
 
 ---
 Hãy phân tích và trả về ĐÚNG MỘT trong các nhãn sau: MARKET SIGNALS, SOLUTIONS & USE CASES, DEEP DIVE, NOISE
@@ -281,7 +281,7 @@ def process_csv(input_file: str, output_file: str, start_idx: int = 0, batch_siz
             # Dùng delay_seconds (mặc định 7 giây) để an toàn
             if idx < len(df) - 1:  # Không cần sleep cho bài cuối cùng
                 print(f"    ⏳ Đợi {delay_seconds} giây để tránh rate limit...")
-                time.sleep(delay_seconds)
+                time.sleep(10)
     
     print(f"\n{'='*60}")
     print("✅ HOÀN THÀNH!")
@@ -332,8 +332,8 @@ def main():
     print("="*60)
     
     # Đường dẫn file
-    input_file = "Data/du_lieu_ai_day_du.csv"
-    output_file = "Data/du_lieu_ai_gan_nhan.csv"
+    input_file = "Data/data_clean.csv"
+    output_file = "Data/data_labed.csv"
     
     # Kiểm tra API key
     if API_KEY == "YOUR_API_KEY_HERE":

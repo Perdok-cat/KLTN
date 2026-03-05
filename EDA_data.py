@@ -1,19 +1,29 @@
 import pandas as pd
 
+# Đọc file CSV
+df = pd.read_csv("data.csv")
 
-if __name__ == "__main__":
-    df = pd.read_csv("data_2_3_2026.csv")
-    
-    # count = df.content.astype(str).str.contains("Không thể trích xuất nội dung", na=False).sum()
+# Hiển thị số lượng bản ghi trước khi xóa
+print(f"Số bản ghi trước khi xóa: {len(df)}")
 
-    # mask = df.content.astype(str).str.contains("Không thể trích xuất nội dung", na=False) 
+# Đếm số hàng có content null
+count_null = df['content'].isnull().sum()
+print(f"Số hàng có content null: {count_null}")
 
-    # df.drop(df.index[mask], inplace=True)
-    # df.reset_index(drop=True, inplace=True) 
+# Xóa các hàng có content null
+df_cleaned = df[df['content'].notna()]
+# Hoặc dùng: df_cleaned = df.dropna(subset=['content'])
 
-    mask_xau = df["content"].astype(str).str.contains("Không thể trích xuất nội dung", na=False)
-    mask_null = df["content"].isna()
+# Reset index sau khi xóa
+df_cleaned = df_cleaned.reset_index(drop=True)
 
-    df = df[~(mask_xau | mask_null)].reset_index(drop=True)
+# Thêm cột label trống ở cuối
+df_cleaned['label'] = ""
 
-    print(df.info())
+# Hiển thị số lượng sau khi xóa
+print(f"Số bản ghi sau khi xóa: {len(df_cleaned)}")
+
+# Lưu file mới
+df_cleaned.to_csv("data_clean.csv", index=False, encoding='utf-8-sig')
+print("✓ Đã lưu vào file: du_lieu_ai_day_du_cleaned.csv")
+>>>>>>> 184f084ed011bcc7be7b14c1d298a8d73f6b20ef
