@@ -267,9 +267,9 @@ def crawl_article_content(url):
 
 def main():
     # Đọc file CSV hiện có
-    input_file = "data_link.csv"
-    output_file = "data_2_3_2026.csv"
-    backup_file = "backup_data_2_3_2026.csv"
+    input_file = "ai_deep_dive_20260307.csv"
+    output_file = "Data/data_deep_dive_2026_03_07_full.csv"
+    backup_file = "backup_data_deepdive.csv"
     
     print(f"Đang đọc file: {input_file}")
     df = pd.read_csv(input_file)
@@ -303,11 +303,11 @@ def main():
     for idx, row in df.iterrows():
         # Bỏ qua nếu đã có content (độ dài > 0)
         if pd.notna(df.at[idx, 'content']) and len(str(df.at[idx, 'content'])) > 0:
-            print(f"\n[{idx+1}/{len(df)}] Đã có content, bỏ qua: {row['title'][:50]}...")
+            print(f"\n[{idx+1}/{len(df)}] Đã có content, bỏ qua: {row['Title'][:50]}...")
             continue
         
-        link = row['link']
-        print(f"\n[{idx+1}/{len(df)}] Đang crawl: {row['title'][:50]}...")
+        link = row['Link']
+        print(f"\n[{idx+1}/{len(df)}] Đang crawl: {row['Title'][:50]}...")
         print(f"    Link: {link}")
         
         try:
