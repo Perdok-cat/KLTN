@@ -1,0 +1,64 @@
+2026-03-10 22:38:15 | INFO | Loading data...
+2026-03-10 22:38:15 | INFO | Total samples: 1356 | Classes: [np.int64(0), np.int64(1), np.int64(2), np.int64(3)]
+2026-03-10 22:38:15 | INFO | Label distribution:
+label
+MARKET SIGNALS           593
+NOISE                    275
+DEEP DIVE                257
+SOLUTIONS & USE CASES    231
+2026-03-10 22:38:15 | INFO | Train: 1084 | Test: 272
+2026-03-10 22:38:15 | INFO | Fitting TF-IDF vectorizer (ngram 1-2, max_features=30000)...
+2026-03-10 22:38:18 | INFO | TF-IDF done in 2.51s | Vocab size: 30000
+2026-03-10 22:38:18 | INFO | [LinearSVC] Training started...
+2026-03-10 22:38:18 | INFO | [LinearSVC] Done in 0.20s | Accuracy: 0.8603
+2026-03-10 22:38:18 | INFO | [LinearSVC] Classification Report:
+              precision    recall  f1-score   support
+
+           0       0.94      0.98      0.96        52
+           1       0.85      0.92      0.88       119
+           2       0.82      0.76      0.79        55
+           3       0.82      0.70      0.75        46
+
+    accuracy                           0.86       272
+   macro avg       0.86      0.84      0.85       272
+weighted avg       0.86      0.86      0.86       272
+
+2026-03-10 22:38:18 | INFO | [LinearSVC] Model saved -> src/ML/Training/LinearSVC.pkl
+2026-03-10 22:38:18 | INFO | [LogisticRegression] Training started...
+2026-03-10 22:38:23 | INFO | [LogisticRegression] Done in 4.69s | Accuracy: 0.8382
+2026-03-10 22:38:23 | INFO | [LogisticRegression] Classification Report:
+              precision    recall  f1-score   support
+
+           0       0.98      0.94      0.96        52
+           1       0.79      0.96      0.86       119
+           2       0.84      0.69      0.76        55
+           3       0.84      0.59      0.69        46
+
+    accuracy                           0.84       272
+   macro avg       0.86      0.79      0.82       272
+weighted avg       0.84      0.84      0.83       272
+
+2026-03-10 22:38:23 | INFO | [LogisticRegression] Model saved -> src/ML/Training/LogisticRegression.pkl
+2026-03-10 22:38:23 | INFO | [RandomForest] Training started...
+2026-03-10 22:38:26 | INFO | [RandomForest] Done in 3.12s | Accuracy: 0.8015
+2026-03-10 22:38:26 | INFO | [RandomForest] Classification Report:
+              precision    recall  f1-score   support
+
+           0       0.98      0.96      0.97        52
+           1       0.75      0.94      0.83       119
+           2       0.76      0.64      0.69        55
+           3       0.84      0.46      0.59        46
+
+    accuracy                           0.80       272
+   macro avg       0.83      0.75      0.77       272
+weighted avg       0.81      0.80      0.79       272
+
+2026-03-10 22:38:26 | INFO | [RandomForest] Model saved -> src/ML/Training/RandomForest.pkl
+2026-03-10 22:38:27 | INFO | Vectorizer saved -> src/ML/Training/tfidf_vectorizer.pkl
+2026-03-10 22:38:27 | INFO | ==================================================
+2026-03-10 22:38:27 | INFO | SUMMARY
+2026-03-10 22:38:27 | INFO |   LinearSVC                 Accuracy: 0.8603
+2026-03-10 22:38:27 | INFO |   LogisticRegression        Accuracy: 0.8382
+2026-03-10 22:38:27 | INFO |   RandomForest              Accuracy: 0.8015
+2026-03-10 22:38:27 | INFO | Log saved -> src/ML/Training/train_20260310_223815.log
+2026-03-10 22:38:27 | INFO | ==================================================

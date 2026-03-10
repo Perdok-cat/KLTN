@@ -332,8 +332,8 @@ def main():
     print("="*60)
     
     # Đường dẫn file
-    input_file = "Data/data_use_cases_2026_03_07_full.csv"
-    output_file = "Data/data_labed_use_case.csv"
+    input_file = "Data/du_lieu_ai_day_du.csv"
+    output_file = "Data/test_data.csv"
     
     # Kiểm tra API key
     if API_KEY == "YOUR_API_KEY_HERE":
