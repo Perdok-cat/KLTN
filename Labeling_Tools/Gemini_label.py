@@ -332,8 +332,8 @@ def main():
     print("="*60)
     
     # Đường dẫn file
-    input_file = "Data/du_lieu_ai_day_du.csv"
-    output_file = "Data/test_data.csv"
+    input_file = "Data/TEST_DATA_NOT_Label.csv"
+    output_file = "Data/Test.csv"
     
     # Kiểm tra API key
     if API_KEY == "YOUR_API_KEY_HERE":
@@ -358,7 +358,7 @@ def main():
         output_file=output_file,
         start_idx=0,  # Bắt đầu từ đầu
         batch_size=3,   # Xử lý 3 bài viết rồi lưu checkpoint
-        delay_seconds=7.0  # 7 giây giữa các request (Free tier: 10 req/phút)
+        delay_seconds=5  # 7 giây giữa các request (Free tier: 10 req/phút)
     )
     
     # Hiển thị thống kê
