@@ -1,0 +1,5 @@
+functions-framework>=3.0.0,<4.0.0
+feedparser==6.0.12
+requests>=2.32.0
+beautifulsoup4>=4.12.0
+google-cloud-bigquery>=3.0.0
