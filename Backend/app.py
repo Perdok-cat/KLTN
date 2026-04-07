@@ -1,7 +1,7 @@
 """
 Flask Backend – AI News Pipeline API
 Nguồn dữ liệu: Google BigQuery (bảng labeled_articles + summarized_articles).
-Dự đoán nhãn: TF-IDF + LinearSVC (sklearn) được load từ đĩa.
+Dự đoán nhãn: gọi Vertex AI Endpoint.
 """
 
 from __future__ import annotations
@@ -11,30 +11,29 @@ import os
 import re
 import time
 import unicodedata
-from pathlib import Path
 from threading import Lock
 
-import joblib
 from dotenv import load_dotenv
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from google.api_core.exceptions import GoogleAPICallError
 from google.cloud import bigquery
-s
+from google.cloud import aiplatform
+
 load_dotenv()
 
 # ── Configuration ──────────────────────────────────────────────────────────────
-GCP_PROJECT = os.getenv("GCP_PROJECT", "helo")
-BQ_DATASET  = os.getenv("BQ_DATASET",  "ai_news")
-BQ_LABELED  = os.getenv("BQ_LABELED_TABLE",  "labeled_articles")
-BQ_SUMMARY  = os.getenv("BQ_SUMMARY_TABLE",  "summarized_articles")
+GCP_PROJECT      = os.getenv("GCP_PROJECT",      "your-gcp-project-id")
+GCP_LOCATION     = os.getenv("GCP_LOCATION",     "us-central1")
+BQ_DATASET       = os.getenv("BQ_DATASET",       "ai_news")
+BQ_LABELED       = os.getenv("BQ_LABELED_TABLE", "labeled_articles")
+BQ_SUMMARY       = os.getenv("BQ_SUMMARY_TABLE", "summarized_articles")
+
+# Vertex AI Endpoint ID (chỉ phần số, không phải full resource name)
+VERTEX_ENDPOINT_ID = os.getenv("VERTEX_ENDPOINT_ID", "")
 
 # Thời gian cache tĩnh (giây) – tránh query BQ liên tục cho stats/labels
 CACHE_TTL = int(os.getenv("CACHE_TTL", "300"))
-
-BASE_DIR   = Path(__file__).parent.parent
-TFIDF_PATH = os.getenv("TFIDF_PATH", str(BASE_DIR / "src" / "ML" / "Training" / "tfidf_vectorizer.pkl"))
-MODEL_PATH = os.getenv("MODEL_PATH", str(BASE_DIR / "src" / "ML" / "Training" / "LinearSVC.pkl"))
 
 # ── Label metadata ─────────────────────────────────────────────────────────────
 LABEL_MAP = {
@@ -59,6 +58,24 @@ LABEL_ICONS = {
 # ── Flask app ──────────────────────────────────────────────────────────────────
 app = Flask(__name__)
 CORS(app)
+
+# ── Vertex AI Endpoint (lazy singleton) ───────────────────────────────────────
+_vertex_endpoint: aiplatform.Endpoint | None = None
+_vertex_lock = Lock()
+
+
+def get_vertex_endpoint() -> aiplatform.Endpoint:
+    global _vertex_endpoint
+    if _vertex_endpoint is None:
+        with _vertex_lock:
+            if _vertex_endpoint is None:
+                if not VERTEX_ENDPOINT_ID:
+                    raise RuntimeError("VERTEX_ENDPOINT_ID chưa được cấu hình.")
+                aiplatform.init(project=GCP_PROJECT, location=GCP_LOCATION)
+                _vertex_endpoint = aiplatform.Endpoint(VERTEX_ENDPOINT_ID)
+                print(f"[INFO] Vertex AI Endpoint connected: {VERTEX_ENDPOINT_ID}")
+    return _vertex_endpoint
+
 
 # ── BigQuery client (lazy singleton) ──────────────────────────────────────────
 _bq: bigquery.Client | None = None
@@ -99,18 +116,7 @@ def cache_set(key: str, value: object) -> None:
     _cache[key] = (time.monotonic(), value)
 
 
-# ── ML model (TF-IDF + sklearn) ───────────────────────────────────────────────
-tfidf = None
-clf   = None
-
-
-def load_model() -> None:
-    global tfidf, clf
-    tfidf = joblib.load(TFIDF_PATH)
-    clf   = joblib.load(MODEL_PATH)
-    print(f"[INFO] ML model loaded: {Path(MODEL_PATH).name}")
-
-
+# ── Text preprocessing ────────────────────────────────────────────────────────
 def clean_text(text: str) -> str:
     text = unicodedata.normalize("NFC", str(text))
     text = text.lower()
@@ -120,11 +126,6 @@ def clean_text(text: str) -> str:
     text = re.sub(r"[^a-zA-ZÀ-ỹà-ỹ\s]", " ", text)
     text = re.sub(r"\s+",                 " ", text).strip()
     return text
-
-
-# Khởi động: load model khi app khởi tạo
-with app.app_context():
-    load_model()
 
 
 # ── SQL helpers ────────────────────────────────────────────────────────────────
@@ -345,7 +346,7 @@ def article_detail(article_id: str):
 
 @app.post("/api/predict")
 def predict():
-    """Dự đoán nhãn bài viết bằng TF-IDF + LinearSVC."""
+    """Dự đoán nhãn bài viết thông qua Vertex AI Endpoint."""
     body = request.get_json(silent=True)
     if not body or "text" not in body:
         return jsonify({"error": "Thiếu trường 'text'"}), 400
@@ -357,40 +358,27 @@ def predict():
     cleaned = clean_text(raw_text)
 
     try:
-        from underthesea import word_tokenize  # noqa: PLC0415
-        text_tok = word_tokenize(cleaned, format="text")
-    except Exception:
-        text_tok = cleaned
+        endpoint = get_vertex_endpoint()
+        # Vertex AI sklearn endpoint nhận list of instances
+        # Mỗi instance là một string (text đã clean)
+        response = endpoint.predict(instances=[cleaned])
+        prediction = response.predictions[0]
+    except RuntimeError as exc:
+        return jsonify({"error": str(exc)}), 503
+    except Exception as exc:
+        return jsonify({"error": f"Vertex AI prediction failed: {exc}"}), 503
 
-    vec  = tfidf.transform([text_tok])
-    pred = clf.predict(vec)[0]
-
-    if isinstance(pred, (int, float)):
-        label = LABEL_MAP.get(int(pred), str(pred))
+    # Prediction có thể là int (class index) hoặc string (class label)
+    if isinstance(prediction, (int, float)):
+        label = LABEL_MAP.get(int(prediction), str(prediction))
     else:
-        label = str(pred)
+        label = str(prediction)
 
-    result: dict = {
+    return jsonify({
         "label": label,
         "icon":  LABEL_ICONS.get(label, ""),
         "color": LABEL_COLORS.get(label, "#000"),
-    }
-
-    if hasattr(clf, "predict_proba"):
-        proba = clf.predict_proba(vec)[0]
-        result["confidence"] = {
-            LABEL_MAP.get(i, str(i)): round(float(p), 4)
-            for i, p in enumerate(proba)
-        }
-    elif hasattr(clf, "decision_function"):
-        scores = clf.decision_function(vec)[0]
-        scores = [float(scores)] if not hasattr(scores, "__iter__") else list(scores)
-        result["decision_scores"] = {
-            LABEL_MAP.get(i, str(i)): round(s, 4)
-            for i, s in enumerate(scores)
-        }
-
-    return jsonify(result)
+    })
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────
