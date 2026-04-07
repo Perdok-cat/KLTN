@@ -1,0 +1,93 @@
+name: Deploy Backend to Cloud Run
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "Backend/**"
+      - ".github/workflows/deploy-backend.yml"
+
+  # Cho phép chạy thủ công từ GitHub UI
+  workflow_dispatch:
+
+env:
+  GCP_REGION:   ${{ vars.GCP_REGION }}         # us-central1
+  AR_REPO:      ${{ vars.AR_REPO }}             # ai-news
+  SERVICE_NAME: ai-news-backend
+  IMAGE:        ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ vars.AR_REPO }}/backend
+
+jobs:
+  build-and-deploy:
+    name: Build & Deploy Backend
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write   # bắt buộc cho Workload Identity Federation
+
+    steps:
+      # ── 1. Checkout code ───────────────────────────────────────────────────
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── 2. Xác thực với Google Cloud qua Workload Identity Federation ────────
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account:            ${{ secrets.WIF_SA_EMAIL }}
+
+      # ── 3. Cài gcloud CLI ──────────────────────────────────────────────────
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      # ── 4. Cấu hình Docker dùng Artifact Registry ─────────────────────────
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.GCP_REGION }}-docker.pkg.dev --quiet
+
+      # ── 5. Build Docker image (build context = repo root) ──────────────────
+      - name: Build Docker image
+        run: |
+          docker build \
+            -f Backend/Dockerfile \
+            -t ${{ env.IMAGE }}:${{ github.sha }} \
+            -t ${{ env.IMAGE }}:latest \
+            .
+
+      # ── 6. Push lên Artifact Registry ─────────────────────────────────────
+      - name: Push Docker image
+        run: |
+          docker push ${{ env.IMAGE }}:${{ github.sha }}
+          docker push ${{ env.IMAGE }}:latest
+
+      # ── 7. Deploy lên Cloud Run ────────────────────────────────────────────
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy ${{ env.SERVICE_NAME }} \
+            --image ${{ env.IMAGE }}:${{ github.sha }} \
+            --region ${{ env.GCP_REGION }} \
+            --platform managed \
+            --allow-unauthenticated \
+            --port 8080 \
+            --memory 512Mi \
+            --cpu 1 \
+            --min-instances 0 \
+            --max-instances 3 \
+            --timeout 120 \
+            --set-env-vars "GCP_PROJECT=${{ secrets.GCP_PROJECT_ID }}" \
+            --set-env-vars "GCP_LOCATION=${{ env.GCP_REGION }}" \
+            --set-env-vars "BQ_DATASET=${{ vars.BQ_DATASET }}" \
+            --set-env-vars "BQ_LABELED_TABLE=${{ vars.BQ_LABELED_TABLE }}" \
+            --set-env-vars "BQ_SUMMARY_TABLE=${{ vars.BQ_SUMMARY_TABLE }}" \
+            --set-env-vars "VERTEX_ENDPOINT_ID=${{ secrets.VERTEX_ENDPOINT_ID }}" \
+            --set-env-vars "FLASK_DEBUG=false" \
+            --project ${{ secrets.GCP_PROJECT_ID }}
+
+      # ── 8. In URL service sau khi deploy ──────────────────────────────────
+      - name: Print service URL
+        run: |
+          URL=$(gcloud run services describe ${{ env.SERVICE_NAME }} \
+            --region ${{ env.GCP_REGION }} \
+            --project ${{ secrets.GCP_PROJECT_ID }} \
+            --format "value(status.url)")
+          echo "::notice title=Backend URL::$URL"
+          echo "Backend deployed at: $URL"

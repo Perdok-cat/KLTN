@@ -1,0 +1,20 @@
+# Môi trường ảo
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Biến môi trường thực (không bao giờ đưa vào image)
+.env
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Test / dev
+*.test.py
+pytest_cache/
+.coverage

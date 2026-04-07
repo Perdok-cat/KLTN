@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Environment variables (KHÔNG commit file này)
+.env
+!.env.example
+
+# ML model artifacts (upload lên GCS, không commit vào git)
+*.pkl
+*.joblib
+*.h5
+*.pt
+*.pth
+src/ML/Training/*.pkl
+
+# Data files
+Data/*.csv
+Data/**/*.csv
+*.parquet
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*.DS_Store
+
+# GCP credentials (KHÔNG BAO GIỜ commit)
+*service-account*.json
+*credentials*.json
+key.json
