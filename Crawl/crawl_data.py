@@ -131,4 +131,4 @@ filename = "data_link.csv"
 df.to_csv(filename, index=False, encoding='utf-8-sig')
 
 print(f"\nĐã hoàn thành! Tìm thấy {len(df)} bài báo liên quan đến AI.")
-print(f"File đã lưu tại: {filename}"
+print(f"File đã lưu tại: {filename}")
