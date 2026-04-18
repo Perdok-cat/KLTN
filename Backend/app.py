@@ -28,6 +28,7 @@ GCP_LOCATION     = os.getenv("GCP_LOCATION",     "us-central1")
 BQ_DATASET       = os.getenv("BQ_DATASET",       "ai_news")
 BQ_LABELED       = os.getenv("BQ_LABELED_TABLE", "labeled_articles")
 BQ_SUMMARY       = os.getenv("BQ_SUMMARY_TABLE", "summarized_articles")
+BQ_HITL          = os.getenv("BQ_HITL_TABLE",    "hitl_reviews")
 
 # Vertex AI Endpoint ID (chỉ phần số, không phải full resource name)
 VERTEX_ENDPOINT_ID = os.getenv("VERTEX_ENDPOINT_ID", "")
@@ -54,6 +55,17 @@ LABEL_ICONS = {
     "DEEP DIVE":             "🔬",
     "NOISE":                 "🔇",
 }
+
+# ── HITL constants ─────────────────────────────────────────────────────────────
+HITL_STATUS_PENDING  = "PENDING_REVIEW"
+HITL_STATUS_APPROVED = "APPROVED"
+HITL_STATUS_REJECTED = "REJECTED_NOISE"
+
+HITL_ACTION_ACCEPT  = "Accept"
+HITL_ACTION_CORRECT = "Correct"
+HITL_ACTION_REJECT  = "Reject"
+HITL_VALID_ACTIONS  = {HITL_ACTION_ACCEPT, HITL_ACTION_CORRECT, HITL_ACTION_REJECT}
+HITL_VALID_LABELS   = {"DEEP DIVE", "MARKET SIGNALS", "NOISE", "SOLUTIONS & USE CASES"}
 
 # ── Flask app ──────────────────────────────────────────────────────────────────
 app = Flask(__name__)
@@ -99,6 +111,41 @@ def tbl(name: str) -> str:
 
 def run_query(sql: str) -> list[bigquery.Row]:
     return list(get_bq().query(sql).result())
+
+
+def run_dml(sql: str) -> int:
+    """Thực thi DML (INSERT/UPDATE/MERGE) và trả về số dòng bị ảnh hưởng."""
+    job = get_bq().query(sql)
+    job.result()
+    return job.num_dml_affected_rows or 0
+
+
+# ── HITL table bootstrap ───────────────────────────────────────────────────────
+_hitl_table_ready   = False
+_hitl_table_lock    = Lock()
+
+
+def ensure_hitl_table() -> None:
+    """Tạo bảng hitl_reviews trên BigQuery nếu chưa tồn tại (idempotent)."""
+    global _hitl_table_ready
+    if _hitl_table_ready:
+        return
+    with _hitl_table_lock:
+        if _hitl_table_ready:
+            return
+        full_id = f"{GCP_PROJECT}.{BQ_DATASET}.{BQ_HITL}"
+        schema = [
+            bigquery.SchemaField("article_id",            "STRING",    mode="REQUIRED"),
+            bigquery.SchemaField("status",                "STRING",    mode="REQUIRED"),
+            bigquery.SchemaField("action",                "STRING",    mode="NULLABLE"),
+            bigquery.SchemaField("human_corrected_label", "STRING",    mode="NULLABLE"),
+            bigquery.SchemaField("reviewed_at",           "TIMESTAMP", mode="REQUIRED"),
+            bigquery.SchemaField("is_used_for_retraining","BOOL",      mode="NULLABLE"),
+        ]
+        table = bigquery.Table(full_id, schema=schema)
+        get_bq().create_table(table, exists_ok=True)
+        print(f"[INFO] HITL table ready: {full_id}")
+        _hitl_table_ready = True
 
 
 # ── TTL cache đơn giản (in-memory) ────────────────────────────────────────────
@@ -379,6 +426,221 @@ def predict():
         "icon":  LABEL_ICONS.get(label, ""),
         "color": LABEL_COLORS.get(label, "#000"),
     })
+
+
+# ── HITL Endpoints ─────────────────────────────────────────────────────────────
+
+@app.get("/api/hitl/pending")
+def hitl_pending():
+    """
+    Danh sách bài viết đang chờ duyệt (status = PENDING_REVIEW).
+    Ưu tiên: nhãn NOISE trước, sau đó sắp xếp theo confidence tăng dần.
+    Query params:
+        page  (int) – mặc định 1
+        limit (int) – mặc định 20, tối đa 100
+    """
+    ensure_hitl_table()
+
+    page   = request.args.get("page",  1,  type=int)
+    limit  = min(request.args.get("limit", 20, type=int), 100)
+    offset = (page - 1) * limit
+
+    base_filter = f"""
+        FROM {tbl(BQ_LABELED)} l
+        LEFT JOIN {tbl(BQ_HITL)} h ON l.id = h.article_id
+        WHERE h.article_id IS NULL
+           OR h.status = '{HITL_STATUS_PENDING}'
+    """
+
+    try:
+        count_rows = run_query(f"SELECT COUNT(*) AS total {base_filter}")
+        total = count_rows[0].total
+
+        rows = run_query(f"""
+            SELECT
+                l.id,
+                l.title,
+                l.link                                                              AS source_url,
+                l.source,
+                l.pub_date,
+                SUBSTR(REGEXP_REPLACE(COALESCE(l.content, ''), r'<[^>]+>', ''), 1, 300)
+                                                                                    AS content_snippet,
+                l.label                                                             AS ai_predicted_label,
+                l.confidence                                                        AS ai_confidence_score,
+                CAST(l.labeled_at AS STRING)                                        AS created_at,
+                COALESCE(h.status, '{HITL_STATUS_PENDING}')                         AS status,
+                h.human_corrected_label,
+                CAST(h.reviewed_at AS STRING)                                       AS reviewed_at
+            {base_filter}
+            ORDER BY
+                CASE WHEN l.label = 'NOISE' THEN 0 ELSE 1 END ASC,
+                CASE LOWER(l.confidence)
+                    WHEN 'low'    THEN 0
+                    WHEN 'medium' THEN 1
+                    WHEN 'high'   THEN 2
+                    ELSE 1
+                END ASC
+            LIMIT  {limit}
+            OFFSET {offset}
+        """)
+    except GoogleAPICallError as exc:
+        return jsonify({"error": str(exc)}), 503
+
+    items = [
+        {
+            "id":                   r.id,
+            "title":                r.title               or "",
+            "source_url":           r.source_url          or "",
+            "source":               r.source              or "",
+            "pub_date":             r.pub_date            or "",
+            "content_snippet":      (r.content_snippet or "") + "…",
+            "ai_predicted_label":   r.ai_predicted_label  or "",
+            "ai_confidence_score":  r.ai_confidence_score or "",
+            "created_at":           r.created_at          or "",
+            "status":               r.status,
+            "human_corrected_label":r.human_corrected_label or None,
+            "reviewed_at":          r.reviewed_at         or None,
+        }
+        for r in rows
+    ]
+
+    return jsonify({
+        "total":    total,
+        "page":     page,
+        "limit":    limit,
+        "articles": items,
+    })
+
+
+@app.post("/api/hitl/review/<article_id>")
+def hitl_review(article_id: str):
+    """
+    Ghi nhận quyết định duyệt của reviewer.
+    Payload JSON:
+        action         (str) – "Accept" | "Correct" | "Reject"
+        corrected_label(str) – bắt buộc khi action == "Correct"
+    Mapping:
+        Accept  → status APPROVED   (giữ nguyên nhãn AI)
+        Correct → status APPROVED   (ghi đè bằng corrected_label)
+        Reject  → status REJECTED_NOISE
+    """
+    ensure_hitl_table()
+
+    body = request.get_json(silent=True) or {}
+    action          = (body.get("action") or "").strip()
+    corrected_label = (body.get("corrected_label") or "").strip() or None
+
+    # ── Validation ──────────────────────────────────────────────────────────
+    if action not in HITL_VALID_ACTIONS:
+        return jsonify({
+            "error": f"action không hợp lệ. Giá trị cho phép: {sorted(HITL_VALID_ACTIONS)}"
+        }), 400
+
+    if action == HITL_ACTION_CORRECT:
+        if not corrected_label:
+            return jsonify({"error": "corrected_label là bắt buộc khi action = 'Correct'"}), 400
+        if corrected_label not in HITL_VALID_LABELS:
+            return jsonify({
+                "error": f"corrected_label không hợp lệ. Giá trị cho phép: {sorted(HITL_VALID_LABELS)}"
+            }), 400
+
+    # ── Kiểm tra bài viết tồn tại ───────────────────────────────────────────
+    try:
+        exists_rows = run_query(f"""
+            SELECT id FROM {tbl(BQ_LABELED)}
+            WHERE id = '{_escape(article_id)}'
+            LIMIT 1
+        """)
+    except GoogleAPICallError as exc:
+        return jsonify({"error": str(exc)}), 503
+
+    if not exists_rows:
+        return jsonify({"error": "Không tìm thấy bài viết"}), 404
+
+    # ── Map action → status ──────────────────────────────────────────────────
+    status = HITL_STATUS_REJECTED if action == HITL_ACTION_REJECT else HITL_STATUS_APPROVED
+    label_sql = f"'{_escape(corrected_label)}'" if corrected_label else "NULL"
+
+    # ── MERGE (upsert) vào hitl_reviews ─────────────────────────────────────
+    merge_sql = f"""
+        MERGE {tbl(BQ_HITL)} AS target
+        USING (SELECT '{_escape(article_id)}' AS article_id) AS source
+        ON target.article_id = source.article_id
+        WHEN MATCHED THEN
+            UPDATE SET
+                status                = '{status}',
+                action                = '{action}',
+                human_corrected_label = {label_sql},
+                reviewed_at           = CURRENT_TIMESTAMP(),
+                is_used_for_retraining = FALSE
+        WHEN NOT MATCHED THEN
+            INSERT (article_id, status, action, human_corrected_label, reviewed_at, is_used_for_retraining)
+            VALUES (
+                '{_escape(article_id)}',
+                '{status}',
+                '{action}',
+                {label_sql},
+                CURRENT_TIMESTAMP(),
+                FALSE
+            )
+    """
+
+    try:
+        run_dml(merge_sql)
+    except GoogleAPICallError as exc:
+        return jsonify({"error": str(exc)}), 503
+
+    return jsonify({
+        "article_id":           article_id,
+        "action":               action,
+        "status":               status,
+        "human_corrected_label":corrected_label,
+        "message":              "Duyệt bài viết thành công",
+    })
+
+
+@app.get("/api/hitl/stats")
+def hitl_stats():
+    """
+    Thống kê nhanh cho HITL Dashboard:
+    - pending_count    : số bài đang chờ duyệt
+    - reviewed_today   : số bài đã duyệt hôm nay (UTC)
+    - approved_total   : tổng số bài đã APPROVED
+    - rejected_total   : tổng số bài đã REJECTED_NOISE
+    - total_articles   : tổng số bài trong labeled_articles
+    """
+    ensure_hitl_table()
+
+    cached = cache_get("hitl_stats")
+    if cached:
+        return jsonify(cached)
+
+    try:
+        rows = run_query(f"""
+            SELECT
+                COUNTIF(h.article_id IS NULL OR h.status = '{HITL_STATUS_PENDING}')
+                                                                AS pending_count,
+                COUNTIF(DATE(h.reviewed_at, 'UTC') = CURRENT_DATE('UTC'))
+                                                                AS reviewed_today,
+                COUNTIF(h.status = '{HITL_STATUS_APPROVED}')    AS approved_total,
+                COUNTIF(h.status = '{HITL_STATUS_REJECTED}')    AS rejected_total,
+                COUNT(DISTINCT l.id)                            AS total_articles
+            FROM {tbl(BQ_LABELED)} l
+            LEFT JOIN {tbl(BQ_HITL)} h ON l.id = h.article_id
+        """)
+    except GoogleAPICallError as exc:
+        return jsonify({"error": str(exc)}), 503
+
+    r = rows[0]
+    result = {
+        "pending_count":   r.pending_count,
+        "reviewed_today":  r.reviewed_today,
+        "approved_total":  r.approved_total,
+        "rejected_total":  r.rejected_total,
+        "total_articles":  r.total_articles,
+    }
+    cache_set("hitl_stats", result)
+    return jsonify(result)
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────
