@@ -26,9 +26,10 @@ with st.sidebar:
     )
     st.title("AI News Pipeline")
     st.divider()
-    st.page_link("app.py",                    label="📊 Dashboard",     icon="📊")
-    st.page_link("pages/1_Tin_Tức.py",        label="📰 Tin tức",       icon="📰")
-    st.page_link("pages/2_Dự_Đoán.py",        label="🔍 Dự đoán nhãn", icon="🔍")
+    st.page_link("app.py",                          label="📊 Dashboard",        icon="📊")
+    st.page_link("pages/1_Tin_Tức.py",              label="📰 Tin tức",          icon="📰")
+    st.page_link("pages/2_Dự_Đoán.py",              label="🔍 Dự đoán nhãn",    icon="🔍")
+    st.page_link("pages/3_HITL_Kiểm_Duyệt.py",     label="🛡️ Kiểm duyệt HITL", icon="🛡️")
     st.divider()
 
     st.info(
