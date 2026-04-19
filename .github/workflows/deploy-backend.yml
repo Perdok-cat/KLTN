@@ -79,6 +79,8 @@ jobs:
             --set-env-vars "BQ_LABELED_TABLE=${{ vars.BQ_LABELED_TABLE }}" \
             --set-env-vars "BQ_SUMMARY_TABLE=${{ vars.BQ_SUMMARY_TABLE }}" \
             --set-env-vars "VERTEX_ENDPOINT_ID=${{ secrets.VERTEX_ENDPOINT_ID }}" \
+            --set-env-vars "HITL_PREPROCESS_CF_URL=${{ secrets.HITL_PREPROCESS_CF_URL }}" \
+            --set-env-vars "HITL_BATCH_THRESHOLD=${{ vars.HITL_BATCH_THRESHOLD }}" \
             --set-env-vars "FLASK_DEBUG=false" \
             --project ${{ secrets.GCP_PROJECT_ID }}
 

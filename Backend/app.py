@@ -11,8 +11,9 @@ import os
 import re
 import time
 import unicodedata
-from threading import Lock
+from threading import Lock, Thread
 
+import requests as http_requests
 from dotenv import load_dotenv
 from flask import Flask, jsonify, request
 from flask_cors import CORS
@@ -29,6 +30,10 @@ BQ_DATASET       = os.getenv("BQ_DATASET",       "ai_news")
 BQ_LABELED       = os.getenv("BQ_LABELED_TABLE", "labeled_articles")
 BQ_SUMMARY       = os.getenv("BQ_SUMMARY_TABLE", "summarized_articles")
 BQ_HITL          = os.getenv("BQ_HITL_TABLE",    "hitl_reviews")
+
+# HITL Preprocessing Cloud Function
+HITL_PREPROCESS_CF_URL  = os.getenv("HITL_PREPROCESS_CF_URL", "")
+HITL_BATCH_THRESHOLD    = int(os.getenv("HITL_BATCH_THRESHOLD", "10"))
 
 # Vertex AI Endpoint ID (chỉ phần số, không phải full resource name)
 VERTEX_ENDPOINT_ID = os.getenv("VERTEX_ENDPOINT_ID", "")
@@ -192,6 +197,36 @@ def _build_where(label_filter: str, search: str, alias: str = "l") -> str:
             f"OR LOWER({alias}.content) LIKE '%{s}%')"
         )
     return ("WHERE " + " AND ".join(clauses)) if clauses else ""
+
+
+# ── HITL Preprocessing trigger ────────────────────────────────────────────────
+
+def _count_unprocessed_reviewed() -> int:
+    """Đếm số bài đã reviewed nhưng chưa được đẩy vào staging."""
+    rows = run_query(f"""
+        SELECT COUNT(*) AS cnt
+        FROM {tbl(BQ_HITL)}
+        WHERE status IN ('{HITL_STATUS_APPROVED}', '{HITL_STATUS_REJECTED}')
+          AND (is_used_for_retraining IS NULL OR is_used_for_retraining = FALSE)
+    """)
+    return int(rows[0].cnt) if rows else 0
+
+
+def _trigger_hitl_preprocess(count: int) -> None:
+    """Gọi Cloud Function preprocessing bất đồng bộ (fire-and-forget).
+    Nếu CF_URL chưa cấu hình thì bỏ qua."""
+    if not HITL_PREPROCESS_CF_URL:
+        print("[INFO] HITL_PREPROCESS_CF_URL chưa cấu hình – bỏ qua trigger.")
+        return
+    try:
+        resp = http_requests.post(
+            HITL_PREPROCESS_CF_URL,
+            json={"trigger": "hitl_batch", "unprocessed_count": count},
+            timeout=30,
+        )
+        print(f"[INFO] HITL preprocess CF triggered – status={resp.status_code}")
+    except Exception as exc:
+        print(f"[WARN] Không thể gọi HITL preprocess CF: {exc}")
 
 
 # ── Endpoints ──────────────────────────────────────────────────────────────────
@@ -590,12 +625,27 @@ def hitl_review(article_id: str):
     except GoogleAPICallError as exc:
         return jsonify({"error": str(exc)}), 503
 
+    # ── Kiểm tra batch threshold và gọi Cloud Function preprocessing ────────
+    # Chạy trong daemon thread để không block Flask worker
+    unprocessed_count: int | None = None
+    try:
+        unprocessed_count = _count_unprocessed_reviewed()
+        if unprocessed_count >= HITL_BATCH_THRESHOLD:
+            Thread(
+                target=_trigger_hitl_preprocess,
+                args=(unprocessed_count,),
+                daemon=True,
+            ).start()
+    except Exception as exc:
+        print(f"[WARN] Lỗi khi kiểm tra batch threshold: {exc}")
+
     return jsonify({
-        "article_id":           article_id,
-        "action":               action,
-        "status":               status,
-        "human_corrected_label":corrected_label,
-        "message":              "Duyệt bài viết thành công",
+        "article_id":              article_id,
+        "action":                  action,
+        "status":                  status,
+        "human_corrected_label":   corrected_label,
+        "message":                 "Duyệt bài viết thành công",
+        "unprocessed_batch_count": unprocessed_count,
     })
 
 

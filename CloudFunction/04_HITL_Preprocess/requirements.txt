@@ -1,0 +1,5 @@
+functions-framework==3.*
+google-cloud-bigquery==3.*
+underthesea==6.*
+nltk==3.6.7
+unicodedata2==15.*
