@@ -68,10 +68,10 @@ jobs:
             --platform managed \
             --allow-unauthenticated \
             --port 8080 \
-            --memory 512Mi \
+            --memory 2Gi \
             --cpu 1 \
             --min-instances 0 \
-            --max-instances 3 \
+            --max-instances 1 \
             --timeout 120 \
             --set-env-vars "GCP_PROJECT=${{ secrets.GCP_PROJECT_ID }}" \
             --set-env-vars "GCP_LOCATION=${{ env.GCP_REGION }}" \
