@@ -201,15 +201,47 @@ def _build_where(label_filter: str, search: str, alias: str = "l") -> str:
 
 # ── HITL Preprocessing trigger ────────────────────────────────────────────────
 
-def _count_unprocessed_reviewed() -> int:
-    """Đếm số bài đã reviewed nhưng chưa được đẩy vào staging."""
-    rows = run_query(f"""
-        SELECT COUNT(*) AS cnt
-        FROM {tbl(BQ_HITL)}
-        WHERE status IN ('{HITL_STATUS_APPROVED}', '{HITL_STATUS_REJECTED}')
-          AND (is_used_for_retraining IS NULL OR is_used_for_retraining = FALSE)
-    """)
-    return int(rows[0].cnt) if rows else 0
+# In-memory counter – tránh query BQ COUNT(*) mỗi lần approve/reject.
+# Được increment sau mỗi review thành công, reset về 0 khi CF được trigger.
+# Nếu process restart, lần đầu tiên vẫn query BQ để khởi tạo đúng giá trị.
+_unprocessed_count: int | None = None  # None = chưa khởi tạo
+_unprocessed_lock = Lock()
+
+
+def _get_unprocessed_count() -> int:
+    """Trả về số bài đã reviewed nhưng chưa staging (dùng BQ chỉ lần đầu)."""
+    global _unprocessed_count
+    if _unprocessed_count is None:
+        with _unprocessed_lock:
+            if _unprocessed_count is None:
+                rows = run_query(f"""
+                    SELECT COUNT(*) AS cnt
+                    FROM {tbl(BQ_HITL)}
+                    WHERE status IN ('{HITL_STATUS_APPROVED}', '{HITL_STATUS_REJECTED}')
+                      AND (is_used_for_retraining IS NULL OR is_used_for_retraining = FALSE)
+                """)
+                _unprocessed_count = int(rows[0].cnt) if rows else 0
+                print(f"[INFO] HITL unprocessed count initialised from BQ: {_unprocessed_count}")
+    return _unprocessed_count
+
+
+def _increment_unprocessed_count() -> int:
+    """Tăng counter sau mỗi review thành công, trả về giá trị mới.
+    Nếu counter chưa khởi tạo (process restart), sync từ BQ trước khi tăng."""
+    global _unprocessed_count
+    # Khởi tạo từ BQ nếu cần (không giữ lock vì _get_unprocessed_count tự lock)
+    if _unprocessed_count is None:
+        _get_unprocessed_count()
+    with _unprocessed_lock:
+        _unprocessed_count += 1
+        return _unprocessed_count
+
+
+def _reset_unprocessed_count() -> None:
+    """Reset counter về 0 sau khi CF được trigger thành công."""
+    global _unprocessed_count
+    with _unprocessed_lock:
+        _unprocessed_count = 0
 
 
 def _trigger_hitl_preprocess(count: int) -> None:
@@ -225,6 +257,7 @@ def _trigger_hitl_preprocess(count: int) -> None:
             timeout=30,
         )
         print(f"[INFO] HITL preprocess CF triggered – status={resp.status_code}")
+        _reset_unprocessed_count()
     except Exception as exc:
         print(f"[WARN] Không thể gọi HITL preprocess CF: {exc}")
 
@@ -579,19 +612,6 @@ def hitl_review(article_id: str):
                 "error": f"corrected_label không hợp lệ. Giá trị cho phép: {sorted(HITL_VALID_LABELS)}"
             }), 400
 
-    # ── Kiểm tra bài viết tồn tại ───────────────────────────────────────────
-    try:
-        exists_rows = run_query(f"""
-            SELECT id FROM {tbl(BQ_LABELED)}
-            WHERE id = '{_escape(article_id)}'
-            LIMIT 1
-        """)
-    except GoogleAPICallError as exc:
-        return jsonify({"error": str(exc)}), 503
-
-    if not exists_rows:
-        return jsonify({"error": "Không tìm thấy bài viết"}), 404
-
     # ── Map action → status ──────────────────────────────────────────────────
     status = HITL_STATUS_REJECTED if action == HITL_ACTION_REJECT else HITL_STATUS_APPROVED
     label_sql = f"'{_escape(corrected_label)}'" if corrected_label else "NULL"
@@ -626,10 +646,10 @@ def hitl_review(article_id: str):
         return jsonify({"error": str(exc)}), 503
 
     # ── Kiểm tra batch threshold và gọi Cloud Function preprocessing ────────
-    # Chạy trong daemon thread để không block Flask worker
+    # Dùng in-memory counter thay vì query BQ COUNT(*) mỗi lần review.
     unprocessed_count: int | None = None
     try:
-        unprocessed_count = _count_unprocessed_reviewed()
+        unprocessed_count = _increment_unprocessed_count()
         if unprocessed_count >= HITL_BATCH_THRESHOLD:
             Thread(
                 target=_trigger_hitl_preprocess,

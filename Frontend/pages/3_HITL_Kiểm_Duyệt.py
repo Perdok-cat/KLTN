@@ -158,6 +158,7 @@ def fetch_main_stats() -> dict:
     return r.json()
 
 
+@st.cache_data(ttl=30, show_spinner=False)
 def fetch_pending(page: int, limit: int) -> dict:
     r = requests.get(
         f"{API_URL}/api/hitl/pending",
@@ -563,6 +564,7 @@ with tab_queue:
                         try:
                             post_review(article_id, "Accept")
                             st.session_state["hitl_actioned"].add(article_id)
+                            fetch_pending.clear()
                             st.toast(f"✅ Approved: {title[:45]}…", icon="✅")
                             st.rerun()
                         except Exception as exc:
@@ -578,6 +580,7 @@ with tab_queue:
                         try:
                             post_review(article_id, "Reject")
                             st.session_state["hitl_actioned"].add(article_id)
+                            fetch_pending.clear()
                             st.toast(f"🗑️ Rejected: {title[:45]}…", icon="🗑️")
                             st.rerun()
                         except Exception as exc:
@@ -601,6 +604,7 @@ with tab_queue:
                         try:
                             post_review(article_id, "Correct", corrected_label=corrected)
                             st.session_state["hitl_actioned"].add(article_id)
+                            fetch_pending.clear()
                             st.toast(
                                 f"✏️ Sửa → {LABEL_VI.get(corrected, corrected)}: {title[:35]}…",
                                 icon="✏️",
