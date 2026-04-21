@@ -1,0 +1,66 @@
+name: Deploy Training Container to Artifact Registry
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "Training/**"
+      - ".github/workflows/deploy-training.yml"
+
+  # Cho phép chạy thủ công từ GitHub UI
+  workflow_dispatch:
+
+env:
+  GCP_REGION:    ${{ vars.GCP_REGION }}       # us-central1
+  AR_REPO:       ${{ vars.AR_REPO }}           # ai-news
+  SERVICE_NAME:  ai-news-trainer
+  IMAGE:         ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ vars.AR_REPO }}/trainer
+
+jobs:
+  build-and-push:
+    name: Build & Push Training Container
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write   # bắt buộc cho Workload Identity Federation
+
+    steps:
+      # ── 1. Checkout ────────────────────────────────────────────────────────
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── 2. Xác thực GCP qua Workload Identity Federation ──────────────────
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account:            ${{ secrets.WIF_SA_EMAIL }}
+
+      # ── 3. Cài gcloud CLI ──────────────────────────────────────────────────
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      # ── 4. Cấu hình Docker dùng Artifact Registry ─────────────────────────
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.GCP_REGION }}-docker.pkg.dev --quiet
+
+      # ── 5. Build Docker image (build context = Training/) ─────────────────
+      - name: Build Docker image
+        run: |
+          docker build \
+            -f Training/Dockerfile \
+            -t ${{ env.IMAGE }}:${{ github.sha }} \
+            -t ${{ env.IMAGE }}:latest \
+            Training/
+
+      # ── 6. Push lên Artifact Registry ─────────────────────────────────────
+      - name: Push Docker image
+        run: |
+          docker push ${{ env.IMAGE }}:${{ github.sha }}
+          docker push ${{ env.IMAGE }}:latest
+
+      # ── 7. In image URI để dùng cho CF 05 env var ─────────────────────────
+      - name: Print image URI
+        run: |
+          echo "::notice title=Training Image URI::${{ env.IMAGE }}:${{ github.sha }}"
+          echo "TRAINING_IMAGE_URI=${{ env.IMAGE }}:${{ github.sha }}"

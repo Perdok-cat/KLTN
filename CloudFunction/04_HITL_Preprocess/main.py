@@ -18,15 +18,17 @@ Luồng xử lý:
   2. Preprocess text → text_tok
   3. INSERT vào mlops_dataset.hitl_staging_data
   4. UPDATE hitl_reviews SET is_used_for_retraining = TRUE
+  5. (Fire-and-forget) Gọi CF 05_Trigger_Training để kích hoạt retraining nếu đủ điều kiện
 
 Biến môi trường:
-  GCP_PROJECT           – Google Cloud Project ID
-  SRC_BQ_DATASET        – Dataset nguồn (default: ai_news)
-  SRC_LABELED_TABLE     – Bảng labeled_articles (default: labeled_articles)
-  SRC_HITL_TABLE        – Bảng hitl_reviews (default: hitl_reviews)
-  DST_BQ_DATASET        – Dataset đích (default: mlops_dataset)
-  DST_STAGING_TABLE     – Bảng đích (default: hitl_staging_data)
-  MAX_ROWS_PER_RUN      – Số bản ghi tối đa mỗi lần chạy (default: 500)
+  GCP_PROJECT              – Google Cloud Project ID
+  SRC_BQ_DATASET           – Dataset nguồn (default: ai_news)
+  SRC_LABELED_TABLE        – Bảng labeled_articles (default: labeled_articles)
+  SRC_HITL_TABLE           – Bảng hitl_reviews (default: hitl_reviews)
+  DST_BQ_DATASET           – Dataset đích (default: mlops_dataset)
+  DST_STAGING_TABLE        – Bảng đích (default: hitl_staging_data)
+  MAX_ROWS_PER_RUN         – Số bản ghi tối đa mỗi lần chạy (default: 500)
+  TRIGGER_TRAINING_CF_URL  – URL Cloud Function 05_Trigger_Training (optional)
 """
 
 from __future__ import annotations
@@ -36,8 +38,10 @@ import os
 import re
 import uuid
 from datetime import datetime, timezone
+from threading import Thread
 
 import functions_framework
+import requests as http_requests
 import unicodedata2
 from google.cloud import bigquery
 from underthesea import word_tokenize
@@ -52,7 +56,8 @@ SRC_LABELED_TABLE = os.environ.get("SRC_LABELED_TABLE",   "labeled_articles")
 SRC_HITL_TABLE    = os.environ.get("SRC_HITL_TABLE",      "hitl_reviews")
 DST_BQ_DATASET    = os.environ.get("DST_BQ_DATASET",      "mlops_dataset")
 DST_STAGING_TABLE = os.environ.get("DST_STAGING_TABLE",   "hitl_staging_data")
-MAX_ROWS_PER_RUN  = int(os.environ.get("MAX_ROWS_PER_RUN", "500"))
+MAX_ROWS_PER_RUN         = int(os.environ.get("MAX_ROWS_PER_RUN",        "500"))
+TRIGGER_TRAINING_CF_URL  = os.environ.get("TRIGGER_TRAINING_CF_URL",   "")
 
 # ── Label encoding – phải khớp với LabelEncoder trong notebook ─────────────────
 # {'DEEP DIVE': 0, 'MARKET SIGNALS': 1, 'NOISE': 2, 'SOLUTIONS & USE CASES': 3}
@@ -136,6 +141,62 @@ def preprocess(title: str, content: str) -> str:
     text_tok = unicodedata2.normalize("NFC", str(text_tok))
 
     return text_tok
+
+
+# ── Chain trigger: gọi CF 05_Trigger_Training sau khi staging xong ────────────
+
+def _get_identity_token(audience: str) -> str | None:
+    """
+    Lấy OIDC Identity Token từ GCP metadata server.
+    Dùng để xác thực khi gọi Cloud Function có --no-allow-unauthenticated.
+    Chỉ hoạt động khi chạy trong môi trường GCP (Cloud Functions, Cloud Run...).
+    """
+    try:
+        resp = http_requests.get(
+            "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity",
+            params={"audience": audience},
+            headers={"Metadata-Flavor": "Google"},
+            timeout=5,
+        )
+        resp.raise_for_status()
+        return resp.text
+    except Exception as exc:
+        logger.warning("Không lấy được identity token: %s", exc)
+        return None
+
+
+def _trigger_training_async(processed_count: int) -> None:
+    """
+    Gọi CF 05_Trigger_Training bất đồng bộ (fire-and-forget) sau khi
+    dữ liệu đã được đưa vào hitl_staging_data.
+    CF 05 tự quyết định có submit training job hay không dựa trên 3 guard.
+    Đính kèm OIDC token để xác thực với CF 05 (no-allow-unauthenticated).
+    """
+    if not TRIGGER_TRAINING_CF_URL:
+        logger.info("TRIGGER_TRAINING_CF_URL chưa cấu hình – bỏ qua trigger training.")
+        return
+
+    def _call():
+        try:
+            headers = {"Content-Type": "application/json"}
+            token = _get_identity_token(audience=TRIGGER_TRAINING_CF_URL)
+            if token:
+                headers["Authorization"] = f"Bearer {token}"
+
+            resp = http_requests.post(
+                TRIGGER_TRAINING_CF_URL,
+                json={"caller": "04_HITL_Preprocess", "new_rows": processed_count},
+                headers=headers,
+                timeout=30,
+            )
+            logger.info(
+                "CF 05_Trigger_Training called – status=%d body=%s",
+                resp.status_code, resp.text[:200],
+            )
+        except Exception as exc:
+            logger.warning("Không thể gọi CF 05_Trigger_Training: %s", exc)
+
+    Thread(target=_call, daemon=True).start()
 
 
 # ── Ensure staging table exists ────────────────────────────────────────────────
@@ -289,6 +350,9 @@ def hitl_preprocess(request):
         logger.info(
             "Marked %d articles as is_used_for_retraining=TRUE.", len(processed_ids)
         )
+
+        # ── 5. Chain trigger: kích hoạt retraining (fire-and-forget) ─────────
+        _trigger_training_async(len(staged_rows))
 
         return (
             {

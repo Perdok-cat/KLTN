@@ -35,6 +35,9 @@ BQ_HITL          = os.getenv("BQ_HITL_TABLE",    "hitl_reviews")
 HITL_PREPROCESS_CF_URL  = os.getenv("HITL_PREPROCESS_CF_URL", "")
 HITL_BATCH_THRESHOLD    = int(os.getenv("HITL_BATCH_THRESHOLD", "10"))
 
+# Training Trigger Cloud Function
+TRIGGER_TRAINING_CF_URL = os.getenv("TRIGGER_TRAINING_CF_URL", "")
+
 # Vertex AI Endpoint ID (chỉ phần số, không phải full resource name)
 VERTEX_ENDPOINT_ID = os.getenv("VERTEX_ENDPOINT_ID", "")
 
@@ -711,6 +714,107 @@ def hitl_stats():
     }
     cache_set("hitl_stats", result)
     return jsonify(result)
+
+
+# ── Admin: Manual Retrain Trigger ──────────────────────────────────────────────
+
+@app.post("/api/admin/trigger-retrain")
+def trigger_retrain():
+    """
+    Kích hoạt retraining thủ công, bypass HITL batch threshold.
+    Gọi trực tiếp CF 05_Trigger_Training – CF đó tự kiểm tra cooldown & data.
+
+    Request body (JSON, tuỳ chọn):
+        force (bool) – nếu true, bỏ qua cooldown guard trong CF 05
+                       (CF 05 cần hỗ trợ tham số này trong tương lai)
+
+    Response:
+        { "status": "submitted" | "skipped" | "error", ... }
+    """
+    if not TRIGGER_TRAINING_CF_URL:
+        return jsonify({
+            "status":  "error",
+            "message": "TRIGGER_TRAINING_CF_URL chưa được cấu hình.",
+        }), 503
+
+    body = request.get_json(silent=True) or {}
+    force = bool(body.get("force", False))
+
+    try:
+        headers = {"Content-Type": "application/json"}
+        # Lấy OIDC token để xác thực với CF 05 (no-allow-unauthenticated)
+        try:
+            token_resp = http_requests.get(
+                "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity",
+                params={"audience": TRIGGER_TRAINING_CF_URL},
+                headers={"Metadata-Flavor": "Google"},
+                timeout=5,
+            )
+            if token_resp.ok:
+                headers["Authorization"] = f"Bearer {token_resp.text}"
+        except Exception:
+            pass  # Chạy local thì không có metadata server – bỏ qua
+
+        resp = http_requests.post(
+            TRIGGER_TRAINING_CF_URL,
+            json={"caller": "backend_admin", "force": force},
+            headers=headers,
+            timeout=30,
+        )
+        data = resp.json() if resp.content else {}
+        return jsonify({
+            "status":         data.get("status", "unknown"),
+            "cf_response":    data,
+            "cf_status_code": resp.status_code,
+        }), resp.status_code if resp.status_code in (200, 500) else 200
+    except Exception as exc:
+        return jsonify({"status": "error", "message": str(exc)}), 503
+
+
+@app.get("/api/admin/training-history")
+def training_history():
+    """
+    Trả về lịch sử các lần training (từ bảng mlops_dataset.training_metadata).
+    Dùng để hiển thị trên dashboard.
+    """
+    mlops_dataset    = os.getenv("BQ_MLOPS_DATASET",  "mlops_dataset")
+    metadata_table   = os.getenv("BQ_METADATA_TABLE", "training_metadata")
+    limit            = min(int(request.args.get("limit", 20)), 100)
+
+    try:
+        rows = run_query(f"""
+            SELECT
+                job_id,
+                status,
+                triggered_at,
+                completed_at,
+                ROUND(accuracy, 4)  AS accuracy,
+                best_model,
+                rows_original,
+                rows_hitl,
+                model_resource_name
+            FROM `{GCP_PROJECT}.{mlops_dataset}.{metadata_table}`
+            ORDER BY triggered_at DESC
+            LIMIT {limit}
+        """)
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 503
+
+    history = [
+        {
+            "job_id":               r.job_id,
+            "status":               r.status,
+            "triggered_at":         r.triggered_at.isoformat() if r.triggered_at else None,
+            "completed_at":         r.completed_at.isoformat() if r.completed_at else None,
+            "accuracy":             float(r.accuracy) if r.accuracy is not None else None,
+            "best_model":           r.best_model,
+            "rows_original":        r.rows_original,
+            "rows_hitl":            r.rows_hitl,
+            "model_resource_name":  r.model_resource_name,
+        }
+        for r in rows
+    ]
+    return jsonify({"history": history, "count": len(history)})
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────
