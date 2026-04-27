@@ -78,8 +78,6 @@ jobs:
             --max-instances 1 \
             --timeout 60 \
             --set-env-vars "MV_API_URL=${{ steps.mv_backend.outputs.url }}" \
-            --set-env-vars "ADMIN_USERNAME=${{ secrets.MV_ADMIN_USERNAME }}" \
-            --set-env-vars "ADMIN_PASSWORD=${{ secrets.MV_ADMIN_PASSWORD }}" \
             --project ${{ secrets.GCP_PROJECT_ID }}
 
       - name: Print service URL
