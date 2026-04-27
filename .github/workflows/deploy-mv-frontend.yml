@@ -1,0 +1,92 @@
+name: Deploy ModelVision Frontend to Cloud Run
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "ModelVision/frontend/**"
+      - ".github/workflows/deploy-mv-frontend.yml"
+  workflow_dispatch:
+
+env:
+  GCP_REGION:   ${{ vars.GCP_REGION }}
+  AR_REPO:      ${{ vars.AR_REPO }}
+  SERVICE_NAME: ai-news-mv-frontend
+  IMAGE:        ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ vars.AR_REPO }}/mv-frontend
+
+jobs:
+  build-and-deploy:
+    name: Build & Deploy ModelVision Frontend
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account:            ${{ secrets.WIF_SA_EMAIL }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.GCP_REGION }}-docker.pkg.dev --quiet
+
+      - name: Get ModelVision Backend URL
+        id: mv_backend
+        run: |
+          URL=$(gcloud run services describe ai-news-mv-backend \
+            --region ${{ env.GCP_REGION }} \
+            --project ${{ secrets.GCP_PROJECT_ID }} \
+            --format "value(status.url)" 2>/dev/null || echo "")
+          if [ -z "$URL" ]; then
+            URL="${{ secrets.MV_BACKEND_URL }}"
+          fi
+          echo "url=$URL" >> $GITHUB_OUTPUT
+          echo "ModelVision Backend URL: $URL"
+
+      - name: Build Docker image
+        run: |
+          docker build \
+            -f ModelVision/frontend/Dockerfile \
+            -t ${{ env.IMAGE }}:${{ github.sha }} \
+            -t ${{ env.IMAGE }}:latest \
+            .
+
+      - name: Push Docker image
+        run: |
+          docker push ${{ env.IMAGE }}:${{ github.sha }}
+          docker push ${{ env.IMAGE }}:latest
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy ${{ env.SERVICE_NAME }} \
+            --image ${{ env.IMAGE }}:${{ github.sha }} \
+            --region ${{ env.GCP_REGION }} \
+            --platform managed \
+            --allow-unauthenticated \
+            --port 8080 \
+            --memory 512Mi \
+            --cpu 1 \
+            --min-instances 0 \
+            --max-instances 1 \
+            --timeout 60 \
+            --set-env-vars "MV_API_URL=${{ steps.mv_backend.outputs.url }}" \
+            --set-env-vars "ADMIN_USERNAME=${{ secrets.MV_ADMIN_USERNAME }}" \
+            --set-env-vars "ADMIN_PASSWORD=${{ secrets.MV_ADMIN_PASSWORD }}" \
+            --project ${{ secrets.GCP_PROJECT_ID }}
+
+      - name: Print service URL
+        run: |
+          URL=$(gcloud run services describe ${{ env.SERVICE_NAME }} \
+            --region ${{ env.GCP_REGION }} \
+            --project ${{ secrets.GCP_PROJECT_ID }} \
+            --format "value(status.url)")
+          echo "::notice title=ModelVision Frontend URL::$URL"
+          echo "ModelVision Frontend deployed at: $URL"

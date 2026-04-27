@@ -11,10 +11,10 @@ import os
 import re
 import time
 import unicodedata
-from threading import Lock, Thread
+from threading import Lock
 
-import requests as http_requests
 from dotenv import load_dotenv
+
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from google.api_core.exceptions import GoogleAPICallError
@@ -26,23 +26,11 @@ load_dotenv()
 # ── Configuration ──────────────────────────────────────────────────────────────
 GCP_PROJECT      = os.getenv("GCP_PROJECT",      "your-gcp-project-id")
 GCP_LOCATION     = os.getenv("GCP_LOCATION",     "us-central1")
-BQ_DATASET       = os.getenv("BQ_DATASET",       "ai_news")
-BQ_LABELED       = os.getenv("BQ_LABELED_TABLE", "labeled_articles")
-BQ_SUMMARY       = os.getenv("BQ_SUMMARY_TABLE", "summarized_articles")
-BQ_HITL          = os.getenv("BQ_HITL_TABLE",    "hitl_reviews")
-
-# HITL Preprocessing Cloud Function
-HITL_PREPROCESS_CF_URL  = os.getenv("HITL_PREPROCESS_CF_URL", "")
-HITL_BATCH_THRESHOLD    = int(os.getenv("HITL_BATCH_THRESHOLD", "10"))
-
-# Training Trigger Cloud Function
-TRIGGER_TRAINING_CF_URL = os.getenv("TRIGGER_TRAINING_CF_URL", "")
-
-# Vertex AI Endpoint ID (chỉ phần số, không phải full resource name)
+BQ_DATASET         = os.getenv("BQ_DATASET",       "ai_news")
+BQ_LABELED         = os.getenv("BQ_LABELED_TABLE", "labeled_articles")
+BQ_SUMMARY         = os.getenv("BQ_SUMMARY_TABLE", "summarized_articles")
 VERTEX_ENDPOINT_ID = os.getenv("VERTEX_ENDPOINT_ID", "")
-
-# Thời gian cache tĩnh (giây) – tránh query BQ liên tục cho stats/labels
-CACHE_TTL = int(os.getenv("CACHE_TTL", "300"))
+CACHE_TTL          = int(os.getenv("CACHE_TTL", "300"))
 
 # ── Label metadata ─────────────────────────────────────────────────────────────
 LABEL_MAP = {
@@ -63,17 +51,6 @@ LABEL_ICONS = {
     "DEEP DIVE":             "🔬",
     "NOISE":                 "🔇",
 }
-
-# ── HITL constants ─────────────────────────────────────────────────────────────
-HITL_STATUS_PENDING  = "PENDING_REVIEW"
-HITL_STATUS_APPROVED = "APPROVED"
-HITL_STATUS_REJECTED = "REJECTED_NOISE"
-
-HITL_ACTION_ACCEPT  = "Accept"
-HITL_ACTION_CORRECT = "Correct"
-HITL_ACTION_REJECT  = "Reject"
-HITL_VALID_ACTIONS  = {HITL_ACTION_ACCEPT, HITL_ACTION_CORRECT, HITL_ACTION_REJECT}
-HITL_VALID_LABELS   = {"DEEP DIVE", "MARKET SIGNALS", "NOISE", "SOLUTIONS & USE CASES"}
 
 # ── Flask app ──────────────────────────────────────────────────────────────────
 app = Flask(__name__)
@@ -128,32 +105,6 @@ def run_dml(sql: str) -> int:
     return job.num_dml_affected_rows or 0
 
 
-# ── HITL table bootstrap ───────────────────────────────────────────────────────
-_hitl_table_ready   = False
-_hitl_table_lock    = Lock()
-
-
-def ensure_hitl_table() -> None:
-    """Tạo bảng hitl_reviews trên BigQuery nếu chưa tồn tại (idempotent)."""
-    global _hitl_table_ready
-    if _hitl_table_ready:
-        return
-    with _hitl_table_lock:
-        if _hitl_table_ready:
-            return
-        full_id = f"{GCP_PROJECT}.{BQ_DATASET}.{BQ_HITL}"
-        schema = [
-            bigquery.SchemaField("article_id",            "STRING",    mode="REQUIRED"),
-            bigquery.SchemaField("status",                "STRING",    mode="REQUIRED"),
-            bigquery.SchemaField("action",                "STRING",    mode="NULLABLE"),
-            bigquery.SchemaField("human_corrected_label", "STRING",    mode="NULLABLE"),
-            bigquery.SchemaField("reviewed_at",           "TIMESTAMP", mode="REQUIRED"),
-            bigquery.SchemaField("is_used_for_retraining","BOOL",      mode="NULLABLE"),
-        ]
-        table = bigquery.Table(full_id, schema=schema)
-        get_bq().create_table(table, exists_ok=True)
-        print(f"[INFO] HITL table ready: {full_id}")
-        _hitl_table_ready = True
 
 
 # ── TTL cache đơn giản (in-memory) ────────────────────────────────────────────
@@ -202,67 +153,6 @@ def _build_where(label_filter: str, search: str, alias: str = "l") -> str:
     return ("WHERE " + " AND ".join(clauses)) if clauses else ""
 
 
-# ── HITL Preprocessing trigger ────────────────────────────────────────────────
-
-# In-memory counter – tránh query BQ COUNT(*) mỗi lần approve/reject.
-# Được increment sau mỗi review thành công, reset về 0 khi CF được trigger.
-# Nếu process restart, lần đầu tiên vẫn query BQ để khởi tạo đúng giá trị.
-_unprocessed_count: int | None = None  # None = chưa khởi tạo
-_unprocessed_lock = Lock()
-
-
-def _get_unprocessed_count() -> int:
-    """Trả về số bài đã reviewed nhưng chưa staging (dùng BQ chỉ lần đầu)."""
-    global _unprocessed_count
-    if _unprocessed_count is None:
-        with _unprocessed_lock:
-            if _unprocessed_count is None:
-                rows = run_query(f"""
-                    SELECT COUNT(*) AS cnt
-                    FROM {tbl(BQ_HITL)}
-                    WHERE status IN ('{HITL_STATUS_APPROVED}', '{HITL_STATUS_REJECTED}')
-                      AND (is_used_for_retraining IS NULL OR is_used_for_retraining = FALSE)
-                """)
-                _unprocessed_count = int(rows[0].cnt) if rows else 0
-                print(f"[INFO] HITL unprocessed count initialised from BQ: {_unprocessed_count}")
-    return _unprocessed_count
-
-
-def _increment_unprocessed_count() -> int:
-    """Tăng counter sau mỗi review thành công, trả về giá trị mới.
-    Nếu counter chưa khởi tạo (process restart), sync từ BQ trước khi tăng."""
-    global _unprocessed_count
-    # Khởi tạo từ BQ nếu cần (không giữ lock vì _get_unprocessed_count tự lock)
-    if _unprocessed_count is None:
-        _get_unprocessed_count()
-    with _unprocessed_lock:
-        _unprocessed_count += 1
-        return _unprocessed_count
-
-
-def _reset_unprocessed_count() -> None:
-    """Reset counter về 0 sau khi CF được trigger thành công."""
-    global _unprocessed_count
-    with _unprocessed_lock:
-        _unprocessed_count = 0
-
-
-def _trigger_hitl_preprocess(count: int) -> None:
-    """Gọi Cloud Function preprocessing bất đồng bộ (fire-and-forget).
-    Nếu CF_URL chưa cấu hình thì bỏ qua."""
-    if not HITL_PREPROCESS_CF_URL:
-        print("[INFO] HITL_PREPROCESS_CF_URL chưa cấu hình – bỏ qua trigger.")
-        return
-    try:
-        resp = http_requests.post(
-            HITL_PREPROCESS_CF_URL,
-            json={"trigger": "hitl_batch", "unprocessed_count": count},
-            timeout=30,
-        )
-        print(f"[INFO] HITL preprocess CF triggered – status={resp.status_code}")
-        _reset_unprocessed_count()
-    except Exception as exc:
-        print(f"[WARN] Không thể gọi HITL preprocess CF: {exc}")
 
 
 # ── Endpoints ──────────────────────────────────────────────────────────────────
@@ -497,324 +387,6 @@ def predict():
         "icon":  LABEL_ICONS.get(label, ""),
         "color": LABEL_COLORS.get(label, "#000"),
     })
-
-
-# ── HITL Endpoints ─────────────────────────────────────────────────────────────
-
-@app.get("/api/hitl/pending")
-def hitl_pending():
-    """
-    Danh sách bài viết đang chờ duyệt (status = PENDING_REVIEW).
-    Ưu tiên: nhãn NOISE trước, sau đó sắp xếp theo confidence tăng dần.
-    Query params:
-        page  (int) – mặc định 1
-        limit (int) – mặc định 20, tối đa 100
-    """
-    ensure_hitl_table()
-
-    page   = request.args.get("page",  1,  type=int)
-    limit  = min(request.args.get("limit", 20, type=int), 100)
-    offset = (page - 1) * limit
-
-    base_filter = f"""
-        FROM {tbl(BQ_LABELED)} l
-        LEFT JOIN {tbl(BQ_HITL)} h ON l.id = h.article_id
-        WHERE h.article_id IS NULL
-           OR h.status = '{HITL_STATUS_PENDING}'
-    """
-
-    try:
-        count_rows = run_query(f"SELECT COUNT(*) AS total {base_filter}")
-        total = count_rows[0].total
-
-        rows = run_query(f"""
-            SELECT
-                l.id,
-                l.title,
-                l.link                                                              AS source_url,
-                l.source,
-                l.pub_date,
-                SUBSTR(REGEXP_REPLACE(COALESCE(l.content, ''), r'<[^>]+>', ''), 1, 300)
-                                                                                    AS content_snippet,
-                l.label                                                             AS ai_predicted_label,
-                l.confidence                                                        AS ai_confidence_score,
-                CAST(l.labeled_at AS STRING)                                        AS created_at,
-                COALESCE(h.status, '{HITL_STATUS_PENDING}')                         AS status,
-                h.human_corrected_label,
-                CAST(h.reviewed_at AS STRING)                                       AS reviewed_at
-            {base_filter}
-            ORDER BY
-                CASE WHEN l.label = 'NOISE' THEN 0 ELSE 1 END ASC,
-                CASE LOWER(l.confidence)
-                    WHEN 'low'    THEN 0
-                    WHEN 'medium' THEN 1
-                    WHEN 'high'   THEN 2
-                    ELSE 1
-                END ASC
-            LIMIT  {limit}
-            OFFSET {offset}
-        """)
-    except GoogleAPICallError as exc:
-        return jsonify({"error": str(exc)}), 503
-
-    items = [
-        {
-            "id":                   r.id,
-            "title":                r.title               or "",
-            "source_url":           r.source_url          or "",
-            "source":               r.source              or "",
-            "pub_date":             r.pub_date            or "",
-            "content_snippet":      (r.content_snippet or "") + "…",
-            "ai_predicted_label":   r.ai_predicted_label  or "",
-            "ai_confidence_score":  r.ai_confidence_score or "",
-            "created_at":           r.created_at          or "",
-            "status":               r.status,
-            "human_corrected_label":r.human_corrected_label or None,
-            "reviewed_at":          r.reviewed_at         or None,
-        }
-        for r in rows
-    ]
-
-    return jsonify({
-        "total":    total,
-        "page":     page,
-        "limit":    limit,
-        "articles": items,
-    })
-
-
-@app.post("/api/hitl/review/<article_id>")
-def hitl_review(article_id: str):
-    """
-    Ghi nhận quyết định duyệt của reviewer.
-    Payload JSON:
-        action         (str) – "Accept" | "Correct" | "Reject"
-        corrected_label(str) – bắt buộc khi action == "Correct"
-    Mapping:
-        Accept  → status APPROVED   (giữ nguyên nhãn AI)
-        Correct → status APPROVED   (ghi đè bằng corrected_label)
-        Reject  → status REJECTED_NOISE
-    """
-    ensure_hitl_table()
-
-    body = request.get_json(silent=True) or {}
-    action          = (body.get("action") or "").strip()
-    corrected_label = (body.get("corrected_label") or "").strip() or None
-
-    # ── Validation ──────────────────────────────────────────────────────────
-    if action not in HITL_VALID_ACTIONS:
-        return jsonify({
-            "error": f"action không hợp lệ. Giá trị cho phép: {sorted(HITL_VALID_ACTIONS)}"
-        }), 400
-
-    if action == HITL_ACTION_CORRECT:
-        if not corrected_label:
-            return jsonify({"error": "corrected_label là bắt buộc khi action = 'Correct'"}), 400
-        if corrected_label not in HITL_VALID_LABELS:
-            return jsonify({
-                "error": f"corrected_label không hợp lệ. Giá trị cho phép: {sorted(HITL_VALID_LABELS)}"
-            }), 400
-
-    # ── Map action → status ──────────────────────────────────────────────────
-    status = HITL_STATUS_REJECTED if action == HITL_ACTION_REJECT else HITL_STATUS_APPROVED
-    label_sql = f"'{_escape(corrected_label)}'" if corrected_label else "NULL"
-
-    # ── MERGE (upsert) vào hitl_reviews ─────────────────────────────────────
-    merge_sql = f"""
-        MERGE {tbl(BQ_HITL)} AS target
-        USING (SELECT '{_escape(article_id)}' AS article_id) AS source
-        ON target.article_id = source.article_id
-        WHEN MATCHED THEN
-            UPDATE SET
-                status                = '{status}',
-                action                = '{action}',
-                human_corrected_label = {label_sql},
-                reviewed_at           = CURRENT_TIMESTAMP(),
-                is_used_for_retraining = FALSE
-        WHEN NOT MATCHED THEN
-            INSERT (article_id, status, action, human_corrected_label, reviewed_at, is_used_for_retraining)
-            VALUES (
-                '{_escape(article_id)}',
-                '{status}',
-                '{action}',
-                {label_sql},
-                CURRENT_TIMESTAMP(),
-                FALSE
-            )
-    """
-
-    try:
-        run_dml(merge_sql)
-    except GoogleAPICallError as exc:
-        return jsonify({"error": str(exc)}), 503
-
-    # ── Kiểm tra batch threshold và gọi Cloud Function preprocessing ────────
-    # Dùng in-memory counter thay vì query BQ COUNT(*) mỗi lần review.
-    unprocessed_count: int | None = None
-    try:
-        unprocessed_count = _increment_unprocessed_count()
-        if unprocessed_count >= HITL_BATCH_THRESHOLD:
-            Thread(
-                target=_trigger_hitl_preprocess,
-                args=(unprocessed_count,),
-                daemon=True,
-            ).start()
-    except Exception as exc:
-        print(f"[WARN] Lỗi khi kiểm tra batch threshold: {exc}")
-
-    return jsonify({
-        "article_id":              article_id,
-        "action":                  action,
-        "status":                  status,
-        "human_corrected_label":   corrected_label,
-        "message":                 "Duyệt bài viết thành công",
-        "unprocessed_batch_count": unprocessed_count,
-    })
-
-
-@app.get("/api/hitl/stats")
-def hitl_stats():
-    """
-    Thống kê nhanh cho HITL Dashboard:
-    - pending_count    : số bài đang chờ duyệt
-    - reviewed_today   : số bài đã duyệt hôm nay (UTC)
-    - approved_total   : tổng số bài đã APPROVED
-    - rejected_total   : tổng số bài đã REJECTED_NOISE
-    - total_articles   : tổng số bài trong labeled_articles
-    """
-    ensure_hitl_table()
-
-    cached = cache_get("hitl_stats")
-    if cached:
-        return jsonify(cached)
-
-    try:
-        rows = run_query(f"""
-            SELECT
-                COUNTIF(h.article_id IS NULL OR h.status = '{HITL_STATUS_PENDING}')
-                                                                AS pending_count,
-                COUNTIF(DATE(h.reviewed_at, 'UTC') = CURRENT_DATE('UTC'))
-                                                                AS reviewed_today,
-                COUNTIF(h.status = '{HITL_STATUS_APPROVED}')    AS approved_total,
-                COUNTIF(h.status = '{HITL_STATUS_REJECTED}')    AS rejected_total,
-                COUNT(DISTINCT l.id)                            AS total_articles
-            FROM {tbl(BQ_LABELED)} l
-            LEFT JOIN {tbl(BQ_HITL)} h ON l.id = h.article_id
-        """)
-    except GoogleAPICallError as exc:
-        return jsonify({"error": str(exc)}), 503
-
-    r = rows[0]
-    result = {
-        "pending_count":   r.pending_count,
-        "reviewed_today":  r.reviewed_today,
-        "approved_total":  r.approved_total,
-        "rejected_total":  r.rejected_total,
-        "total_articles":  r.total_articles,
-    }
-    cache_set("hitl_stats", result)
-    return jsonify(result)
-
-
-# ── Admin: Manual Retrain Trigger ──────────────────────────────────────────────
-
-@app.post("/api/admin/trigger-retrain")
-def trigger_retrain():
-    """
-    Kích hoạt retraining thủ công, bypass HITL batch threshold.
-    Gọi trực tiếp CF 05_Trigger_Training – CF đó tự kiểm tra cooldown & data.
-
-    Request body (JSON, tuỳ chọn):
-        force (bool) – nếu true, bỏ qua cooldown guard trong CF 05
-                       (CF 05 cần hỗ trợ tham số này trong tương lai)
-
-    Response:
-        { "status": "submitted" | "skipped" | "error", ... }
-    """
-    if not TRIGGER_TRAINING_CF_URL:
-        return jsonify({
-            "status":  "error",
-            "message": "TRIGGER_TRAINING_CF_URL chưa được cấu hình.",
-        }), 503
-
-    body = request.get_json(silent=True) or {}
-    force = bool(body.get("force", False))
-
-    try:
-        headers = {"Content-Type": "application/json"}
-        # Lấy OIDC token để xác thực với CF 05 (no-allow-unauthenticated)
-        try:
-            token_resp = http_requests.get(
-                "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity",
-                params={"audience": TRIGGER_TRAINING_CF_URL},
-                headers={"Metadata-Flavor": "Google"},
-                timeout=5,
-            )
-            if token_resp.ok:
-                headers["Authorization"] = f"Bearer {token_resp.text}"
-        except Exception:
-            pass  # Chạy local thì không có metadata server – bỏ qua
-
-        resp = http_requests.post(
-            TRIGGER_TRAINING_CF_URL,
-            json={"caller": "backend_admin", "force": force},
-            headers=headers,
-            timeout=30,
-        )
-        data = resp.json() if resp.content else {}
-        return jsonify({
-            "status":         data.get("status", "unknown"),
-            "cf_response":    data,
-            "cf_status_code": resp.status_code,
-        }), resp.status_code if resp.status_code in (200, 500) else 200
-    except Exception as exc:
-        return jsonify({"status": "error", "message": str(exc)}), 503
-
-
-@app.get("/api/admin/training-history")
-def training_history():
-    """
-    Trả về lịch sử các lần training (từ bảng mlops_dataset.training_metadata).
-    Dùng để hiển thị trên dashboard.
-    """
-    mlops_dataset    = os.getenv("BQ_MLOPS_DATASET",  "mlops_dataset")
-    metadata_table   = os.getenv("BQ_METADATA_TABLE", "training_metadata")
-    limit            = min(int(request.args.get("limit", 20)), 100)
-
-    try:
-        rows = run_query(f"""
-            SELECT
-                job_id,
-                status,
-                triggered_at,
-                completed_at,
-                ROUND(accuracy, 4)  AS accuracy,
-                best_model,
-                rows_original,
-                rows_hitl,
-                model_resource_name
-            FROM `{GCP_PROJECT}.{mlops_dataset}.{metadata_table}`
-            ORDER BY triggered_at DESC
-            LIMIT {limit}
-        """)
-    except Exception as exc:
-        return jsonify({"error": str(exc)}), 503
-
-    history = [
-        {
-            "job_id":               r.job_id,
-            "status":               r.status,
-            "triggered_at":         r.triggered_at.isoformat() if r.triggered_at else None,
-            "completed_at":         r.completed_at.isoformat() if r.completed_at else None,
-            "accuracy":             float(r.accuracy) if r.accuracy is not None else None,
-            "best_model":           r.best_model,
-            "rows_original":        r.rows_original,
-            "rows_hitl":            r.rows_hitl,
-            "model_resource_name":  r.model_resource_name,
-        }
-        for r in rows
-    ]
-    return jsonify({"history": history, "count": len(history)})
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────

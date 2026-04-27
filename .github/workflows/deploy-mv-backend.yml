@@ -1,0 +1,90 @@
+name: Deploy ModelVision Backend to Cloud Run
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "ModelVision/backend/**"
+      - ".github/workflows/deploy-mv-backend.yml"
+  workflow_dispatch:
+
+env:
+  GCP_REGION:   ${{ vars.GCP_REGION }}
+  AR_REPO:      ${{ vars.AR_REPO }}
+  SERVICE_NAME: ai-news-mv-backend
+  IMAGE:        ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ vars.AR_REPO }}/mv-backend
+
+jobs:
+  build-and-deploy:
+    name: Build & Deploy ModelVision Backend
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account:            ${{ secrets.WIF_SA_EMAIL }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.GCP_REGION }}-docker.pkg.dev --quiet
+
+      - name: Build Docker image
+        run: |
+          docker build \
+            -f ModelVision/backend/Dockerfile \
+            -t ${{ env.IMAGE }}:${{ github.sha }} \
+            -t ${{ env.IMAGE }}:latest \
+            .
+
+      - name: Push Docker image
+        run: |
+          docker push ${{ env.IMAGE }}:${{ github.sha }}
+          docker push ${{ env.IMAGE }}:latest
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy ${{ env.SERVICE_NAME }} \
+            --image ${{ env.IMAGE }}:${{ github.sha }} \
+            --region ${{ env.GCP_REGION }} \
+            --platform managed \
+            --no-allow-unauthenticated \
+            --port 8080 \
+            --memory 1Gi \
+            --cpu 1 \
+            --min-instances 0 \
+            --max-instances 1 \
+            --timeout 120 \
+            --set-env-vars "GCP_PROJECT=${{ secrets.GCP_PROJECT_ID }}" \
+            --set-env-vars "GCP_LOCATION=${{ env.GCP_REGION }}" \
+            --set-env-vars "BQ_AI_DATASET=${{ vars.BQ_DATASET }}" \
+            --set-env-vars "BQ_LABELED_TABLE=${{ vars.BQ_LABELED_TABLE }}" \
+            --set-env-vars "BQ_HITL_TABLE=${{ vars.BQ_HITL_TABLE }}" \
+            --set-env-vars "BQ_MLOPS_DATASET=${{ vars.BQ_MLOPS_DATASET }}" \
+            --set-env-vars "BQ_HITL_STAGING=${{ vars.BQ_HITL_STAGING }}" \
+            --set-env-vars "BQ_ORIGINAL_TABLE=${{ vars.BQ_ORIGINAL_TABLE }}" \
+            --set-env-vars "BQ_METADATA_TABLE=${{ vars.BQ_METADATA_TABLE }}" \
+            --set-env-vars "VERTEX_ENDPOINT_ID=${{ secrets.VERTEX_ENDPOINT_ID }}" \
+            --set-env-vars "HITL_PREPROCESS_CF_URL=${{ secrets.HITL_PREPROCESS_CF_URL }}" \
+            --set-env-vars "TRIGGER_TRAINING_CF_URL=${{ secrets.TRIGGER_TRAINING_CF_URL }}" \
+            --set-env-vars "HITL_BATCH_THRESHOLD=${{ vars.HITL_BATCH_THRESHOLD }}" \
+            --set-env-vars "FLASK_DEBUG=false" \
+            --project ${{ secrets.GCP_PROJECT_ID }}
+
+      - name: Print service URL
+        run: |
+          URL=$(gcloud run services describe ${{ env.SERVICE_NAME }} \
+            --region ${{ env.GCP_REGION }} \
+            --project ${{ secrets.GCP_PROJECT_ID }} \
+            --format "value(status.url)")
+          echo "::notice title=ModelVision Backend URL::$URL"
+          echo "ModelVision Backend deployed at: $URL"
