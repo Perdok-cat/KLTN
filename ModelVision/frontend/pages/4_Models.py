@@ -3,6 +3,8 @@ import os
 import requests
 import streamlit as st
 
+from utils.gcp_auth import auth_headers
+
 MV_API_URL = os.getenv("MV_API_URL", "http://localhost:5001")
 
 st.set_page_config(page_title="Model Management · ModelVision", page_icon="🤖", layout="wide")
@@ -23,13 +25,13 @@ st.divider()
 
 @st.cache_data(ttl=30, show_spinner=False)
 def fetch_traffic() -> dict:
-    r = requests.get(f"{MV_API_URL}/api/model/traffic", timeout=15)
+    r = requests.get(f"{MV_API_URL}/api/model/traffic", headers=auth_headers(), timeout=15)
     r.raise_for_status()
     return r.json()
 
 @st.cache_data(ttl=60, show_spinner=False)
 def fetch_model_list() -> list:
-    r = requests.get(f"{MV_API_URL}/api/model/list", timeout=20)
+    r = requests.get(f"{MV_API_URL}/api/model/list", headers=auth_headers(), timeout=20)
     r.raise_for_status()
     return r.json().get("models", [])
 
@@ -104,6 +106,7 @@ if len(deployed_models) >= 2:
                 try:
                     resp = requests.post(
                         f"{MV_API_URL}/api/model/traffic",
+                        headers=auth_headers(),
                         json={"traffic_split": new_split},
                         timeout=30,
                     )
@@ -125,6 +128,7 @@ if len(deployed_models) >= 2:
                 try:
                     resp = requests.post(
                         f"{MV_API_URL}/api/model/traffic",
+                        headers=auth_headers(),
                         json={"traffic_split": full_split},
                         timeout=30,
                     )
@@ -145,6 +149,7 @@ if len(deployed_models) >= 2:
                 try:
                     resp = requests.post(
                         f"{MV_API_URL}/api/model/traffic",
+                        headers=auth_headers(),
                         json={"traffic_split": rollback_split},
                         timeout=30,
                     )

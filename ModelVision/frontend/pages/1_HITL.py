@@ -7,6 +7,8 @@ import plotly.graph_objects as go
 import requests
 import streamlit as st
 
+from utils.gcp_auth import auth_headers
+
 MV_API_URL = os.getenv("MV_API_URL", "http://localhost:5001")
 
 st.set_page_config(
@@ -103,17 +105,17 @@ with st.sidebar:
 # ── API helpers ────────────────────────────────────────────────────────────────
 @st.cache_data(ttl=60, show_spinner=False)
 def fetch_hitl_stats() -> dict:
-    return requests.get(f"{MV_API_URL}/api/hitl/stats", timeout=10).json()
+    return requests.get(f"{MV_API_URL}/api/hitl/stats", headers=auth_headers(), timeout=10).json()
 
 @st.cache_data(ttl=30, show_spinner=False)
 def fetch_pending(page: int, limit: int) -> dict:
-    return requests.get(f"{MV_API_URL}/api/hitl/pending", params={"page": page, "limit": limit}, timeout=15).json()
+    return requests.get(f"{MV_API_URL}/api/hitl/pending", headers=auth_headers(), params={"page": page, "limit": limit}, timeout=15).json()
 
 def post_review(article_id: str, action: str, corrected_label: str | None = None) -> dict:
     payload: dict = {"action": action}
     if corrected_label:
         payload["corrected_label"] = corrected_label
-    r = requests.post(f"{MV_API_URL}/api/hitl/review/{article_id}", json=payload, timeout=10)
+    r = requests.post(f"{MV_API_URL}/api/hitl/review/{article_id}", headers=auth_headers(), json=payload, timeout=10)
     r.raise_for_status()
     return r.json()
 

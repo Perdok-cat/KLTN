@@ -3,6 +3,8 @@ import os
 import requests
 import streamlit as st
 
+from utils.gcp_auth import auth_headers
+
 MV_API_URL = os.getenv("MV_API_URL", "http://localhost:5001")
 
 st.set_page_config(
@@ -26,7 +28,7 @@ with st.sidebar:
     api_badge = st.empty()
 
 try:
-    r = requests.get(f"{MV_API_URL}/api/health", timeout=3)
+    r = requests.get(f"{MV_API_URL}/api/health", headers=auth_headers(), timeout=3)
     if r.ok:
         api_badge.success("✅ Backend kết nối")
     else:
@@ -42,7 +44,7 @@ col1, col2, col3, col4 = st.columns(4)
 
 # ── HITL stats ─────────────────────────────────────────────────────────────────
 try:
-    hitl = requests.get(f"{MV_API_URL}/api/hitl/stats", timeout=10).json()
+    hitl = requests.get(f"{MV_API_URL}/api/hitl/stats", headers=auth_headers(), timeout=10).json()
 except Exception:
     hitl = {}
 
@@ -53,7 +55,7 @@ with col2:
 
 # ── Latest training run ────────────────────────────────────────────────────────
 try:
-    hist = requests.get(f"{MV_API_URL}/api/training/history", params={"limit": 1}, timeout=10).json()
+    hist = requests.get(f"{MV_API_URL}/api/training/history", headers=auth_headers(), params={"limit": 1}, timeout=10).json()
     latest = hist.get("history", [{}])[0]
 except Exception:
     latest = {}
@@ -68,7 +70,7 @@ st.divider()
 
 # ── Drift quick view ───────────────────────────────────────────────────────────
 try:
-    drift = requests.get(f"{MV_API_URL}/api/drift/summary", timeout=15).json()
+    drift = requests.get(f"{MV_API_URL}/api/drift/summary", headers=auth_headers(), timeout=15).json()
     d_pct = drift.get("drift_pct", {})
     if d_pct:
         st.subheader("📊 Drift nhanh (HITL vs Original, %)")

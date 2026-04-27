@@ -4,6 +4,8 @@ import plotly.graph_objects as go
 import requests
 import streamlit as st
 
+from utils.gcp_auth import auth_headers
+
 MV_API_URL = os.getenv("MV_API_URL", "http://localhost:5001")
 
 st.set_page_config(page_title="Training History · ModelVision", page_icon="📈", layout="wide")
@@ -31,7 +33,7 @@ STATUS_COLOR = {
 
 @st.cache_data(ttl=30, show_spinner=False)
 def fetch_history(limit: int) -> list:
-    r = requests.get(f"{MV_API_URL}/api/training/history", params={"limit": limit}, timeout=15)
+    r = requests.get(f"{MV_API_URL}/api/training/history", headers=auth_headers(), params={"limit": limit}, timeout=15)
     r.raise_for_status()
     return r.json().get("history", [])
 
@@ -104,6 +106,7 @@ if st.button("🚀 Trigger Retrain", type="primary"):
         try:
             resp = requests.post(
                 f"{MV_API_URL}/api/training/trigger",
+                headers=auth_headers(),
                 json={"force": force},
                 timeout=35,
             )

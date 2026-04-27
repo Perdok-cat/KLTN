@@ -4,6 +4,8 @@ import plotly.graph_objects as go
 import requests
 import streamlit as st
 
+from utils.gcp_auth import auth_headers
+
 MV_API_URL = os.getenv("MV_API_URL", "http://localhost:5001")
 
 st.set_page_config(page_title="Data Drift · ModelVision", page_icon="📊", layout="wide")
@@ -37,7 +39,7 @@ LABEL_COLORS = {
 
 @st.cache_data(ttl=60, show_spinner=False)
 def fetch_drift() -> dict:
-    r = requests.get(f"{MV_API_URL}/api/drift/summary", timeout=20)
+    r = requests.get(f"{MV_API_URL}/api/drift/summary", headers=auth_headers(), timeout=20)
     r.raise_for_status()
     return r.json()
 
