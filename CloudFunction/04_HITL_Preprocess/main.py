@@ -147,19 +147,17 @@ def preprocess(title: str, content: str) -> str:
 
 def _get_identity_token(audience: str) -> str | None:
     """
-    Lấy OIDC Identity Token từ GCP metadata server.
-    Dùng để xác thực khi gọi Cloud Function có --no-allow-unauthenticated.
+    Lấy OIDC Identity Token dùng google-auth để xác thực khi gọi
+    Cloud Function có --no-allow-unauthenticated.
     Chỉ hoạt động khi chạy trong môi trường GCP (Cloud Functions, Cloud Run...).
     """
     try:
-        resp = http_requests.get(
-            "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity",
-            params={"audience": audience},
-            headers={"Metadata-Flavor": "Google"},
-            timeout=5,
-        )
-        resp.raise_for_status()
-        return resp.text
+        from google.auth.transport.requests import Request as GoogleAuthRequest
+        from google.oauth2 import id_token as google_id_token
+
+        auth_req = GoogleAuthRequest()
+        token = google_id_token.fetch_id_token(auth_req, audience)
+        return token
     except Exception as exc:
         logger.warning("Không lấy được identity token: %s", exc)
         return None
@@ -313,8 +311,8 @@ def hitl_preprocess(request):
                 "label":       label,
                 "label_enc":   label_enc,
                 "action":      row.action or "",
-                "reviewed_at": row.reviewed_at,
-                "created_at":  now_utc,
+                "reviewed_at": row.reviewed_at.isoformat() if row.reviewed_at else None,
+                "created_at":  now_utc.isoformat(),
                 "data_source": "HITL",
             })
             processed_ids.append(row.article_id)

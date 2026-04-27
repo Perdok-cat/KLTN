@@ -139,7 +139,7 @@ def _guard_running_jobs() -> tuple[bool, str]:
     Tránh submit song song hai job cùng lúc.
     """
     try:
-        aiplatform.init(project=GCP_PROJECT, location=GCP_LOCATION)
+        aiplatform.init(project=GCP_PROJECT, location=GCP_LOCATION, staging_bucket=f"gs://{GCS_BUCKET}")
         jobs = aiplatform.CustomJob.list(
             filter=f'display_name="{_JOB_DISPLAY_NAME}" AND state="JOB_STATE_RUNNING"',
             project=GCP_PROJECT,
@@ -191,7 +191,7 @@ def _submit_training_job(job_id: str) -> str:
     Tất cả config được truyền qua biến môi trường vào container.
     Trả về resource_name của job.
     """
-    aiplatform.init(project=GCP_PROJECT, location=GCP_LOCATION)
+    aiplatform.init(project=GCP_PROJECT, location=GCP_LOCATION, staging_bucket=f"gs://{GCS_BUCKET}")
 
     job = aiplatform.CustomJob(
         display_name=_JOB_DISPLAY_NAME,
