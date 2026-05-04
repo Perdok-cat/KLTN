@@ -148,15 +148,34 @@ def _get_model():
 
 
 def _build_generation_config():
-    """Return a GenerationConfig with temperature, output limit, and JSON schema enforcement."""
+    """
+    Return a GenerationConfig with:
+    - temperature=0.2        : stable, deterministic output
+    - max_output_tokens=1024 : sufficient for summary + key_points + keywords
+    - response_mime_type     : enforce JSON output at API level
+    - response_schema        : enforce exact field structure
+    - thinking_budget=0      : disable Gemini 2.5 thinking mode — it is enabled by
+                               default and its chain-of-thought tokens leak into
+                               response.text, breaking JSON parsing.
+    """
     if USE_VERTEX:
         from vertexai.generative_models import GenerationConfig
-        return GenerationConfig(
+        cfg_kwargs: dict = dict(
             temperature=0.2,
             max_output_tokens=1024,
             response_mime_type="application/json",
             response_schema=_RESPONSE_SCHEMA,
         )
+        try:
+            from vertexai.generative_models import ThinkingConfig
+            cfg_kwargs["thinking_config"] = ThinkingConfig(thinking_budget=0)
+            logger.info("Thinking mode disabled (ThinkingConfig available).")
+        except ImportError:
+            logger.warning(
+                "ThinkingConfig not found — upgrade google-cloud-aiplatform>=1.71.0 "
+                "to disable Gemini 2.5 thinking mode and avoid JSON parse errors."
+            )
+        return GenerationConfig(**cfg_kwargs)
     else:
         import google.generativeai as genai
         return genai.GenerationConfig(
@@ -171,11 +190,33 @@ def _build_generation_config():
 # ---------------------------------------------------------------------------
 
 def _parse_response(raw: str) -> dict:
-    """Strip markdown fences if present and parse JSON."""
+    """
+    Parse JSON from LLM response with layered fallbacks:
+    1. Strip thinking tags  (<thinking>…</thinking>) that Gemini 2.5 may emit.
+    2. Strip markdown fences (```json … ```).
+    3. Direct JSON parse.
+    4. Last resort: extract the first {...} block embedded in surrounding text.
+    """
     text = raw.strip()
+
+    # Thinking content from Gemini 2.5 Flash (should be absent when thinking_budget=0,
+    # but handled here as a defensive fallback)
+    text = re.sub(r"<thinking>.*?</thinking>", "", text, flags=re.DOTALL).strip()
+    text = re.sub(r"<think>.*?</think>",       "", text, flags=re.DOTALL).strip()
+
+    # Markdown fences
     text = re.sub(r"^```json?\s*", "", text)
     text = re.sub(r"\s*```$",      "", text)
-    return json.loads(text.strip())
+    text = text.strip()
+
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        # Extract first JSON object when model adds preamble/suffix text
+        m = re.search(r"\{.*\}", text, re.DOTALL)
+        if m:
+            return json.loads(m.group(0))
+        raise
 
 
 def _classify_error(err: str) -> str:
@@ -289,8 +330,12 @@ def summarize_article(
             raw_text = response.text if response and hasattr(response, "text") else ""
             last_validation_errors = ["JSON parse error"]
             last_error_type = "json_parse_error"
-            last_error_msg  = f"Raw snippet: {raw_text[:200]}"
-            logger.warning("[%s] JSON parse failed (attempt %d/%d).", short_link, attempt + 1, MAX_RETRIES)
+            last_error_msg  = f"Raw snippet: {raw_text[:300]}"
+            # Log the raw output so the root cause is visible in Cloud Logging
+            logger.warning(
+                "[%s] JSON parse failed (attempt %d/%d). Raw output: %s",
+                short_link, attempt + 1, MAX_RETRIES, raw_text[:300],
+            )
             if attempt < MAX_RETRIES - 1:
                 time.sleep(2)
 
