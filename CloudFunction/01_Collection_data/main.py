@@ -94,7 +94,7 @@ AI_KEYWORDS = [
     "gpu", "h100", "a100", "chip bán dẫn", "bán dẫn", "vi xử lý ai", "cuda",
     # Ứng dụng & Xu hướng
     "xe tự hành", "robot", "tự động hóa", "big data", "dữ liệu lớn",
-    "chatbot", "virtual assistant", "trợ lý ảo", "trợ lý ai",
+    "chatbot", "virtual assistant", "trợ lý ảo", "trợ lý ai" , "tích hợp ai",
 ]
 
 USER_AGENTS = [
