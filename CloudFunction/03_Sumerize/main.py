@@ -337,37 +337,82 @@ def _full(table: str) -> str:
     return f"`{GCP_PROJECT}.{BQ_DATASET}.{table}`"
 
 
-def _migrate_schema(
+# Module-level flag: ensure_output_table runs only once per container instance.
+# Cloud Run reuses warm containers, so this avoids repeated BQ metadata API calls.
+_tables_ready = False
+
+_SUMMARY_SCHEMA = [
+    bigquery.SchemaField("id",             "STRING",    mode="REQUIRED"),
+    bigquery.SchemaField("source_id",      "STRING",    mode="NULLABLE"),
+    bigquery.SchemaField("title",          "STRING",    mode="NULLABLE"),
+    bigquery.SchemaField("link",           "STRING",    mode="REQUIRED"),
+    bigquery.SchemaField("source",         "STRING",    mode="NULLABLE"),
+    bigquery.SchemaField("pub_date",       "STRING",    mode="NULLABLE"),
+    bigquery.SchemaField("label",          "STRING",    mode="NULLABLE"),
+    bigquery.SchemaField("summary",        "STRING",    mode="NULLABLE"),
+    bigquery.SchemaField("key_points",     "STRING",    mode="NULLABLE"),  # JSON array string
+    bigquery.SchemaField("keywords",       "STRING",    mode="NULLABLE"),  # comma-separated
+    bigquery.SchemaField("model_used",     "STRING",    mode="NULLABLE"),
+    bigquery.SchemaField("prompt_version", "STRING",    mode="NULLABLE"),
+    bigquery.SchemaField("summarized_at",  "TIMESTAMP", mode="REQUIRED"),
+]
+
+_FAILED_SCHEMA = [
+    bigquery.SchemaField("id",             "STRING",    mode="REQUIRED"),
+    bigquery.SchemaField("source_id",      "STRING",    mode="NULLABLE"),
+    bigquery.SchemaField("link",           "STRING",    mode="NULLABLE"),
+    bigquery.SchemaField("error_type",     "STRING",    mode="NULLABLE"),
+    bigquery.SchemaField("error_message",  "STRING",    mode="NULLABLE"),
+    bigquery.SchemaField("attempt_count",  "INTEGER",   mode="NULLABLE"),
+    bigquery.SchemaField("model_used",     "STRING",    mode="NULLABLE"),
+    bigquery.SchemaField("prompt_version", "STRING",    mode="NULLABLE"),
+    bigquery.SchemaField("failed_at",      "TIMESTAMP", mode="REQUIRED"),
+    bigquery.SchemaField("resolved",       "BOOLEAN",   mode="NULLABLE"),
+]
+
+
+def _sync_table(
     client: bigquery.Client,
-    table_ref: bigquery.TableReference,
-    desired_schema: list[bigquery.SchemaField],
+    dataset_ref: bigquery.DatasetReference,
+    table_name: str,
+    schema: list[bigquery.SchemaField],
 ) -> None:
     """
-    Non-destructive schema migration: add any columns in desired_schema that are
-    missing from the existing table. Existing columns are never modified or removed.
+    Ensure a BQ table exists with the given schema.
+    - If the table does not exist: create it.
+    - If it exists but is missing columns: add only the missing ones (non-destructive).
+    - Raises on real errors (e.g. permissions) so they are not silently swallowed.
     """
-    try:
-        table = client.get_table(table_ref)
-    except Exception:
-        return  # table doesn't exist yet; create_table will handle it
+    from google.api_core.exceptions import NotFound
 
-    existing_names = {f.name for f in table.schema}
-    new_fields = [f for f in desired_schema if f.name not in existing_names]
-    if new_fields:
-        table.schema = list(table.schema) + new_fields
-        client.update_table(table, ["schema"])
-        logger.info(
-            "Schema migration: added column(s) %s to '%s'.",
-            [f.name for f in new_fields],
-            table_ref.table_id,
-        )
+    table_ref = bigquery.TableReference(dataset_ref, table_name)
+    try:
+        existing = client.get_table(table_ref)
+        # Table exists — check for missing columns
+        existing_names = {f.name for f in existing.schema}
+        new_fields = [f for f in schema if f.name not in existing_names]
+        if new_fields:
+            existing.schema = list(existing.schema) + new_fields
+            client.update_table(existing, ["schema"])
+            logger.info(
+                "Schema migration: added %s to '%s'.",
+                [f.name for f in new_fields], table_name,
+            )
+    except NotFound:
+        # Table does not exist — create it with the full schema
+        client.create_table(bigquery.Table(table_ref, schema))
+        logger.info("Created table '%s'.", table_name)
 
 
 def ensure_output_table(client: bigquery.Client) -> None:
     """
-    Create summarized_articles and failed_summaries tables if they do not exist,
-    and migrate any missing columns in existing tables.
+    Idempotent setup: run once per container instance (guarded by _tables_ready).
+    Creates or migrates summarized_articles and failed_summaries.
     """
+    global _tables_ready
+    if _tables_ready:
+        return
+
     dataset_ref = bigquery.DatasetReference(GCP_PROJECT, BQ_DATASET)
     try:
         client.get_dataset(dataset_ref)
@@ -376,43 +421,10 @@ def ensure_output_table(client: bigquery.Client) -> None:
         ds.location = "US"
         client.create_dataset(ds, exists_ok=True)
 
-    # summarized_articles
-    summary_schema = [
-        bigquery.SchemaField("id",             "STRING",    mode="REQUIRED"),
-        bigquery.SchemaField("source_id",      "STRING",    mode="NULLABLE"),
-        bigquery.SchemaField("title",          "STRING",    mode="NULLABLE"),
-        bigquery.SchemaField("link",           "STRING",    mode="REQUIRED"),
-        bigquery.SchemaField("source",         "STRING",    mode="NULLABLE"),
-        bigquery.SchemaField("pub_date",       "STRING",    mode="NULLABLE"),
-        bigquery.SchemaField("label",          "STRING",    mode="NULLABLE"),
-        bigquery.SchemaField("summary",        "STRING",    mode="NULLABLE"),
-        bigquery.SchemaField("key_points",     "STRING",    mode="NULLABLE"),  # JSON array string
-        bigquery.SchemaField("keywords",       "STRING",    mode="NULLABLE"),  # comma-separated
-        bigquery.SchemaField("model_used",     "STRING",    mode="NULLABLE"),
-        bigquery.SchemaField("prompt_version", "STRING",    mode="NULLABLE"),
-        bigquery.SchemaField("summarized_at",  "TIMESTAMP", mode="REQUIRED"),
-    ]
-    table_ref = bigquery.TableReference(dataset_ref, BQ_OUTPUT_TABLE)
-    _migrate_schema(client, table_ref, summary_schema)
-    client.create_table(bigquery.Table(table_ref, summary_schema), exists_ok=True)
+    _sync_table(client, dataset_ref, BQ_OUTPUT_TABLE, _SUMMARY_SCHEMA)
+    _sync_table(client, dataset_ref, BQ_FAILED_TABLE, _FAILED_SCHEMA)
 
-    # failed_summaries — records every article that exhausted all retries
-    failed_schema = [
-        bigquery.SchemaField("id",             "STRING",    mode="REQUIRED"),
-        bigquery.SchemaField("source_id",      "STRING",    mode="NULLABLE"),
-        bigquery.SchemaField("link",           "STRING",    mode="NULLABLE"),
-        bigquery.SchemaField("error_type",     "STRING",    mode="NULLABLE"),
-        bigquery.SchemaField("error_message",  "STRING",    mode="NULLABLE"),
-        bigquery.SchemaField("attempt_count",  "INTEGER",   mode="NULLABLE"),
-        bigquery.SchemaField("model_used",     "STRING",    mode="NULLABLE"),
-        bigquery.SchemaField("prompt_version", "STRING",    mode="NULLABLE"),
-        bigquery.SchemaField("failed_at",      "TIMESTAMP", mode="REQUIRED"),
-        bigquery.SchemaField("resolved",       "BOOLEAN",   mode="NULLABLE"),
-    ]
-    failed_ref = bigquery.TableReference(dataset_ref, BQ_FAILED_TABLE)
-    _migrate_schema(client, failed_ref, failed_schema)
-    client.create_table(bigquery.Table(failed_ref, failed_schema), exists_ok=True)
-
+    _tables_ready = True
     logger.info("BQ tables ready: %s, %s.", BQ_OUTPUT_TABLE, BQ_FAILED_TABLE)
 
 
@@ -492,11 +504,7 @@ def insert_rows(client: bigquery.Client, rows: list[dict]) -> int:
     if not rows:
         return 0
     table_id = f"{GCP_PROJECT}.{BQ_DATASET}.{BQ_OUTPUT_TABLE}"
-    errors   = client.insert_rows_json(
-        table_id,
-        rows,
-        ignore_unknown_values=True,  # tolerates any schema drift during migration
-    )
+    errors = client.insert_rows_json(table_id, rows)
     if errors:
         logger.error("BigQuery insert errors: %s", errors)
         return max(0, len(rows) - len(errors))
