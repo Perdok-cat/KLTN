@@ -29,7 +29,14 @@ BIGQUERY_PROJECT = os.environ.get("BIGQUERY_PROJECT", "project-e5ef1531-7ef9-423
 BIGQUERY_DATASET = "ai_news_data"
 BIGQUERY_TABLE   = "raw_articles"
 
-MAX_ARTICLES_PER_RUN = 10   # cap to avoid Cloud Function timeout
+# How many candidate articles to pull from RSS before BQ dedup.
+# Must be significantly larger than MAX_ARTICLES_PER_RUN so that after
+# removing already-stored articles there are still new ones left to crawl.
+MAX_RSS_CANDIDATES = 50
+
+# How many articles to actually crawl and insert per Cloud Function run.
+# Kept small to stay within the 540s timeout budget (each crawl ~2-4s).
+MAX_ARTICLES_PER_RUN = 10
 
 # Minimum character count for content to be considered a real article
 MIN_CONTENT_LENGTH = 150
@@ -101,17 +108,17 @@ AI_KEYWORDS = [
     "chatbot", "virtual assistant", "trợ lý ảo", "trợ lý ai" , "tích hợp ai",
 ]
 
-# P1.3 — Patterns indicating non-news content (video, listicle, advertorial)
+# P1.3 — Patterns indicating non-news content (video, listicle, advertorial).
+# Keep these conservative — false positives (real articles wrongly filtered)
+# are more costly than false negatives (listicles that slip through).
 SKIP_TITLE_PATTERNS = [
     r"\[video\]",
     r"\[clip\]",
-    r"^\s*\[",
-    r"\btop\s+\d+\b",
-    r"\d+\s+(điều|cách|bước|lý do|mẹo)",
+    r"^\s*\[video",           # titles starting with [VIDEO ...
     r"\bquảng cáo\b",
-    r"\bsponsored\b",
+    r"\bsponsored content\b",
     r"\badvertisement\b",
-    r"\bpr\b",
+    r"\bchiến dịch pr\b",     # "PR campaign" — more specific than bare \bpr\b
 ]
 
 USER_AGENTS = [
@@ -181,8 +188,12 @@ def _is_valid_article(title: str, summary: str) -> bool:
 
 def collect_links_from_rss() -> list[dict]:
     """
-    Parse every RSS feed and return a deduplicated list of AI-related articles.
+    Parse every RSS feed and return up to MAX_RSS_CANDIDATES AI-related articles.
     Each item: {"title": ..., "link": ..., "pub_date": ..., "source": ...}
+
+    Collecting more candidates than MAX_ARTICLES_PER_RUN is intentional:
+    after BQ dedup removes already-stored articles, MAX_ARTICLES_PER_RUN
+    of the remaining NEW articles will be crawled.
 
     Deduplication is applied at two levels:
       - URL-level: same link is never added twice
@@ -196,7 +207,7 @@ def collect_links_from_rss() -> list[dict]:
     skipped_invalid = 0
 
     for rss_url in RSS_URLS:
-        if len(articles) >= MAX_ARTICLES_PER_RUN:
+        if len(articles) >= MAX_RSS_CANDIDATES:
             break
         try:
             feed = feedparser.parse(rss_url)
@@ -206,7 +217,7 @@ def collect_links_from_rss() -> list[dict]:
             continue
 
         for entry in feed.entries:
-            if len(articles) >= MAX_ARTICLES_PER_RUN:
+            if len(articles) >= MAX_RSS_CANDIDATES:
                 break
 
             title   = getattr(entry, "title",     "") or ""
@@ -515,6 +526,12 @@ def collect_ai_news(request):
     if not new_articles:
         return {"status": "ok", "message": "All articles already in BigQuery.", "inserted": 0}, 200
 
+    # Limit crawl batch to MAX_ARTICLES_PER_RUN AFTER dedup, not before.
+    # This ensures we always have fresh candidates even when recent articles
+    # are already stored.
+    new_articles = new_articles[:MAX_ARTICLES_PER_RUN]
+    logger.info("Articles to crawl this run: %d (cap=%d)", len(new_articles), MAX_ARTICLES_PER_RUN)
+
     # --- 3. Crawl content ---
     rows_to_insert: list[dict] = []
     crawl_date_str = run_start.isoformat()
@@ -578,15 +595,15 @@ def collect_ai_news(request):
 
     # P2.1 — include crawl quality stats in the response for observability
     summary = {
-        "status":           "ok",
-        "rss_articles":     len(articles),
-        "new_articles":     len(new_articles),
-        "inserted":         inserted_total,
-        "crawl_ok":         crawl_stats["ok"],
-        "crawl_skipped":    crawl_stats["skipped_short"],
-        "failed_domains":   crawl_stats["failed_domains"],
-        "elapsed_seconds":  round(elapsed, 1),
-        "run_at":           crawl_date_str,
+        "status":            "ok",
+        "rss_candidates":    len(articles),          # articles collected from RSS (before BQ dedup)
+        "new_after_dedup":   len(new_articles),      # new articles not yet in BQ
+        "inserted":          inserted_total,          # actually crawled + stored this run
+        "crawl_ok":          crawl_stats["ok"],
+        "crawl_skipped":     crawl_stats["skipped_short"],
+        "failed_domains":    crawl_stats["failed_domains"],
+        "elapsed_seconds":   round(elapsed, 1),
+        "run_at":            crawl_date_str,
     }
     logger.info("Run summary: %s", summary)
     return summary, 200
