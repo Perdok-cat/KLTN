@@ -337,8 +337,37 @@ def _full(table: str) -> str:
     return f"`{GCP_PROJECT}.{BQ_DATASET}.{table}`"
 
 
+def _migrate_schema(
+    client: bigquery.Client,
+    table_ref: bigquery.TableReference,
+    desired_schema: list[bigquery.SchemaField],
+) -> None:
+    """
+    Non-destructive schema migration: add any columns in desired_schema that are
+    missing from the existing table. Existing columns are never modified or removed.
+    """
+    try:
+        table = client.get_table(table_ref)
+    except Exception:
+        return  # table doesn't exist yet; create_table will handle it
+
+    existing_names = {f.name for f in table.schema}
+    new_fields = [f for f in desired_schema if f.name not in existing_names]
+    if new_fields:
+        table.schema = list(table.schema) + new_fields
+        client.update_table(table, ["schema"])
+        logger.info(
+            "Schema migration: added column(s) %s to '%s'.",
+            [f.name for f in new_fields],
+            table_ref.table_id,
+        )
+
+
 def ensure_output_table(client: bigquery.Client) -> None:
-    """Create summarized_articles and failed_summaries tables if they do not exist."""
+    """
+    Create summarized_articles and failed_summaries tables if they do not exist,
+    and migrate any missing columns in existing tables.
+    """
     dataset_ref = bigquery.DatasetReference(GCP_PROJECT, BQ_DATASET)
     try:
         client.get_dataset(dataset_ref)
@@ -364,6 +393,7 @@ def ensure_output_table(client: bigquery.Client) -> None:
         bigquery.SchemaField("summarized_at",  "TIMESTAMP", mode="REQUIRED"),
     ]
     table_ref = bigquery.TableReference(dataset_ref, BQ_OUTPUT_TABLE)
+    _migrate_schema(client, table_ref, summary_schema)
     client.create_table(bigquery.Table(table_ref, summary_schema), exists_ok=True)
 
     # failed_summaries — records every article that exhausted all retries
@@ -380,6 +410,7 @@ def ensure_output_table(client: bigquery.Client) -> None:
         bigquery.SchemaField("resolved",       "BOOLEAN",   mode="NULLABLE"),
     ]
     failed_ref = bigquery.TableReference(dataset_ref, BQ_FAILED_TABLE)
+    _migrate_schema(client, failed_ref, failed_schema)
     client.create_table(bigquery.Table(failed_ref, failed_schema), exists_ok=True)
 
     logger.info("BQ tables ready: %s, %s.", BQ_OUTPUT_TABLE, BQ_FAILED_TABLE)
@@ -461,7 +492,11 @@ def insert_rows(client: bigquery.Client, rows: list[dict]) -> int:
     if not rows:
         return 0
     table_id = f"{GCP_PROJECT}.{BQ_DATASET}.{BQ_OUTPUT_TABLE}"
-    errors   = client.insert_rows_json(table_id, rows)
+    errors   = client.insert_rows_json(
+        table_id,
+        rows,
+        ignore_unknown_values=True,  # tolerates any schema drift during migration
+    )
     if errors:
         logger.error("BigQuery insert errors: %s", errors)
         return max(0, len(rows) - len(errors))
