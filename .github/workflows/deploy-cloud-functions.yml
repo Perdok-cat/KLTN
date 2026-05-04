@@ -57,11 +57,7 @@ jobs:
             trigger-training:
               - 'CloudFunction/05_Trigger_Training/**'
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Shared setup steps (dùng chung cho tất cả deploy jobs)
-# ──────────────────────────────────────────────────────────────────────────────
-
-  # ── CF 01: crawldata ────────────────────────────────────────────────────────
+  # ── CF 01: crawldata (Cloud Run source deploy) ──────────────────────────────
   deploy-crawldata:
     name: Deploy crawldata
     needs: detect-changes
@@ -88,30 +84,27 @@ jobs:
 
       - name: Deploy crawldata
         run: |
-          gcloud functions deploy crawldata \
-            --gen2 \
-            --region=${{ env.GCP_REGION }} \
-            --runtime=python311 \
+          gcloud run deploy crawldata \
             --source=CloudFunction/01_Collection_data \
-            --entry-point=collect_ai_news \
-            --trigger-http \
+            --region=${{ env.GCP_REGION }} \
             --allow-unauthenticated \
             --memory=512Mi \
             --timeout=540s \
             --max-instances=5 \
             --min-instances=0 \
+            --build-env-vars=GOOGLE_FUNCTION_TARGET=collect_ai_news \
             --set-env-vars="BIGQUERY_PROJECT=${{ secrets.GCP_PROJECT_ID }}" \
             --project=${{ secrets.GCP_PROJECT_ID }}
 
-      - name: Print function URL
+      - name: Print service URL
         run: |
-          URL=$(gcloud functions describe crawldata \
-            --gen2 --region=${{ env.GCP_REGION }} \
+          URL=$(gcloud run services describe crawldata \
+            --region=${{ env.GCP_REGION }} \
             --project=${{ secrets.GCP_PROJECT_ID }} \
-            --format="value(serviceConfig.uri)")
+            --format="value(status.url)")
           echo "::notice title=crawldata URL::$URL"
 
-  # ── CF 02: inference ────────────────────────────────────────────────────────
+  # ── CF 02: inference (Cloud Run source deploy) ──────────────────────────────
   deploy-inference:
     name: Deploy inference
     needs: detect-changes
@@ -138,30 +131,27 @@ jobs:
 
       - name: Deploy inference
         run: |
-          gcloud functions deploy inference \
-            --gen2 \
-            --region=${{ env.GCP_REGION }} \
-            --runtime=python311 \
+          gcloud run deploy inference \
             --source=CloudFunction/02_Inference \
-            --entry-point=run_inference \
-            --trigger-http \
+            --region=${{ env.GCP_REGION }} \
             --allow-unauthenticated \
             --memory=2Gi \
             --timeout=540s \
             --max-instances=5 \
             --min-instances=0 \
+            --build-env-vars=GOOGLE_FUNCTION_TARGET=run_inference \
             --set-env-vars="GCP_PROJECT=${{ secrets.GCP_PROJECT_ID }},BQ_DATASET=ai_news_data,VERTEX_LOCATION=${{ env.GCP_REGION }},VERTEX_ENDPOINT_ID=${{ secrets.VERTEX_ENDPOINT_ID }}" \
             --project=${{ secrets.GCP_PROJECT_ID }}
 
-      - name: Print function URL
+      - name: Print service URL
         run: |
-          URL=$(gcloud functions describe inference \
-            --gen2 --region=${{ env.GCP_REGION }} \
+          URL=$(gcloud run services describe inference \
+            --region=${{ env.GCP_REGION }} \
             --project=${{ secrets.GCP_PROJECT_ID }} \
-            --format="value(serviceConfig.uri)")
+            --format="value(status.url)")
           echo "::notice title=inference URL::$URL"
 
-  # ── CF 03: sumerize ─────────────────────────────────────────────────────────
+  # ── CF 03: sumerize (Cloud Run source deploy) ───────────────────────────────
   deploy-sumerize:
     name: Deploy sumerize
     needs: detect-changes
@@ -188,30 +178,27 @@ jobs:
 
       - name: Deploy sumerize
         run: |
-          gcloud functions deploy sumerize \
-            --gen2 \
-            --region=${{ env.GCP_REGION }} \
-            --runtime=python311 \
+          gcloud run deploy sumerize \
             --source=CloudFunction/03_Sumerize \
-            --entry-point=run_summarize \
-            --trigger-http \
+            --region=${{ env.GCP_REGION }} \
             --allow-unauthenticated \
             --memory=512Mi \
             --timeout=540s \
             --max-instances=3 \
             --min-instances=0 \
+            --build-env-vars=GOOGLE_FUNCTION_TARGET=run_summarize \
             --set-env-vars="GCP_PROJECT=${{ secrets.GCP_PROJECT_ID }},BQ_DATASET=ai_news_data,GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}" \
             --project=${{ secrets.GCP_PROJECT_ID }}
 
-      - name: Print function URL
+      - name: Print service URL
         run: |
-          URL=$(gcloud functions describe sumerize \
-            --gen2 --region=${{ env.GCP_REGION }} \
+          URL=$(gcloud run services describe sumerize \
+            --region=${{ env.GCP_REGION }} \
             --project=${{ secrets.GCP_PROJECT_ID }} \
-            --format="value(serviceConfig.uri)")
+            --format="value(status.url)")
           echo "::notice title=sumerize URL::$URL"
 
-  # ── CF 04: preprocess ───────────────────────────────────────────────────────
+  # ── CF 04: preprocess (Cloud Run source deploy) ─────────────────────────────
   deploy-preprocess:
     name: Deploy preprocess
     needs: detect-changes
@@ -238,30 +225,27 @@ jobs:
 
       - name: Deploy preprocess
         run: |
-          gcloud functions deploy preprocess \
-            --gen2 \
-            --region=${{ env.GCP_REGION }} \
-            --runtime=python311 \
+          gcloud run deploy preprocess \
             --source=CloudFunction/04_HITL_Preprocess \
-            --entry-point=hitl_preprocess \
-            --trigger-http \
+            --region=${{ env.GCP_REGION }} \
             --allow-unauthenticated \
             --memory=1Gi \
             --timeout=300s \
             --max-instances=5 \
             --min-instances=0 \
+            --build-env-vars=GOOGLE_FUNCTION_TARGET=hitl_preprocess \
             --set-env-vars="GCP_PROJECT=${{ secrets.GCP_PROJECT_ID }},SRC_BQ_DATASET=ai_news_data,TRIGGER_TRAINING_CF_URL=${{ secrets.TRIGGER_TRAINING_CF_URL }}" \
             --project=${{ secrets.GCP_PROJECT_ID }}
 
-      - name: Print function URL
+      - name: Print service URL
         run: |
-          URL=$(gcloud functions describe preprocess \
-            --gen2 --region=${{ env.GCP_REGION }} \
+          URL=$(gcloud run services describe preprocess \
+            --region=${{ env.GCP_REGION }} \
             --project=${{ secrets.GCP_PROJECT_ID }} \
-            --format="value(serviceConfig.uri)")
+            --format="value(status.url)")
           echo "::notice title=preprocess URL::$URL"
 
-  # ── CF 05: trigger-training ─────────────────────────────────────────────────
+  # ── CF 05: trigger-training (Cloud Functions Gen2) ──────────────────────────
   deploy-trigger-training:
     name: Deploy trigger-training
     needs: detect-changes
