@@ -8,6 +8,7 @@ import time
 import random
 import json
 import re
+import unicodedata
 import uuid
 import logging
 import os
@@ -29,6 +30,9 @@ BIGQUERY_DATASET = "ai_news_data"
 BIGQUERY_TABLE   = "raw_articles"
 
 MAX_ARTICLES_PER_RUN = 10   # cap to avoid Cloud Function timeout
+
+# Minimum character count for content to be considered a real article
+MIN_CONTENT_LENGTH = 150
 
 RSS_URLS = [
     # --- NHÓM TIN CÔNG NGHỆ CHUYÊN BIỆT ---
@@ -97,6 +101,19 @@ AI_KEYWORDS = [
     "chatbot", "virtual assistant", "trợ lý ảo", "trợ lý ai" , "tích hợp ai",
 ]
 
+# P1.3 — Patterns indicating non-news content (video, listicle, advertorial)
+SKIP_TITLE_PATTERNS = [
+    r"\[video\]",
+    r"\[clip\]",
+    r"^\s*\[",
+    r"\btop\s+\d+\b",
+    r"\d+\s+(điều|cách|bước|lý do|mẹo)",
+    r"\bquảng cáo\b",
+    r"\bsponsored\b",
+    r"\badvertisement\b",
+    r"\bpr\b",
+]
+
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
@@ -140,6 +157,24 @@ def _extract_source(url: str) -> str:
         return ""
 
 
+# P1.2 — Normalize title for cross-source deduplication
+def _normalize_title(title: str) -> str:
+    """Lowercase + NFC normalize + strip punctuation for title comparison."""
+    t = unicodedata.normalize("NFC", title.lower().strip())
+    t = re.sub(r"[^\w\s]", "", t)
+    return re.sub(r"\s+", " ", t).strip()
+
+
+# P1.3 — Detect non-news content (video, listicle, advertorial)
+def _is_valid_article(title: str, summary: str) -> bool:
+    """Return False if title/summary matches known non-news patterns."""
+    text = (title + " " + summary).lower()
+    for pattern in SKIP_TITLE_PATTERNS:
+        if re.search(pattern, text):
+            return False
+    return True
+
+
 # ---------------------------------------------------------------------------
 # Step 1 – Collect links from RSS feeds
 # ---------------------------------------------------------------------------
@@ -148,9 +183,17 @@ def collect_links_from_rss() -> list[dict]:
     """
     Parse every RSS feed and return a deduplicated list of AI-related articles.
     Each item: {"title": ..., "link": ..., "pub_date": ..., "source": ...}
+
+    Deduplication is applied at two levels:
+      - URL-level: same link is never added twice
+      - Title-level: same article from different sources is skipped (P1.2)
+    Non-news content (video, advertorial) is filtered out (P1.3).
     """
     seen_links: set[str] = set()
+    seen_titles: set[str] = set()   # P1.2 — cross-source title dedup
     articles: list[dict] = []
+    skipped_duplicate_title = 0
+    skipped_invalid = 0
 
     for rss_url in RSS_URLS:
         if len(articles) >= MAX_ARTICLES_PER_RUN:
@@ -174,16 +217,36 @@ def collect_links_from_rss() -> list[dict]:
             if not link or link in seen_links:
                 continue
 
-            if _is_ai_article(title) or _is_ai_article(summary):
-                seen_links.add(link)
-                articles.append({
-                    "title":    title,
-                    "link":     link,
-                    "pub_date": pub_raw,
-                    "source":   _extract_source(link),
-                })
+            # P1.3 — skip video, listicle, advertorial
+            if not _is_valid_article(title, summary):
+                skipped_invalid += 1
+                logger.debug("  Skipped (non-news): %s", title[:80])
+                continue
 
-    logger.info("Total RSS articles collected: %d", len(articles))
+            if not (_is_ai_article(title) or _is_ai_article(summary)):
+                continue
+
+            # P1.2 — cross-source title dedup
+            norm = _normalize_title(title)
+            if norm and norm in seen_titles:
+                skipped_duplicate_title += 1
+                logger.debug("  Skipped (duplicate title): %s", title[:80])
+                continue
+
+            seen_links.add(link)
+            if norm:
+                seen_titles.add(norm)
+            articles.append({
+                "title":    title,
+                "link":     link,
+                "pub_date": pub_raw,
+                "source":   _extract_source(link),
+            })
+
+    logger.info(
+        "RSS collection: %d articles | skipped duplicate-title=%d | skipped non-news=%d",
+        len(articles), skipped_duplicate_title, skipped_invalid,
+    )
     return articles
 
 
@@ -195,23 +258,28 @@ def filter_new_links(client: bigquery.Client, articles: list[dict]) -> list[dict
     """
     Query BigQuery to find which links are already stored, then return only the
     articles whose link is NOT yet in the table.
+
+    Uses parameterized UNNEST query to avoid SQL injection (P2.3).
     """
     if not articles:
         return []
 
     table_ref = f"`{BIGQUERY_PROJECT}.{BIGQUERY_DATASET}.{BIGQUERY_TABLE}`"
-
     links = [a["link"] for a in articles]
-    # BigQuery supports parameterized array queries via UNNEST
-    formatted = ", ".join(f"'{l.replace(chr(39), chr(39)*2)}'" for l in links)
 
+    # P2.3 — parameterized query via UNNEST (safe, no string escaping needed)
     query = f"""
         SELECT link
         FROM {table_ref}
-        WHERE link IN ({formatted})
+        WHERE link IN UNNEST(@links)
     """
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ArrayQueryParameter("links", "STRING", links)
+        ]
+    )
     try:
-        existing = {row.link for row in client.query(query).result()}
+        existing = {row.link for row in client.query(query, job_config=job_config).result()}
         logger.info("Links already in BigQuery: %d", len(existing))
     except Exception as exc:
         # If the table doesn't exist yet, treat all as new
@@ -345,7 +413,10 @@ def crawl_content(url: str) -> str:
 # ---------------------------------------------------------------------------
 
 def ensure_table_exists(client: bigquery.Client) -> None:
-    """Create the BigQuery dataset and table if they do not exist yet."""
+    """
+    Create the BigQuery dataset and table if they do not exist yet.
+    If the table already exists, add any missing nullable fields (schema migration).
+    """
     dataset_ref = bigquery.DatasetReference(BIGQUERY_PROJECT, BIGQUERY_DATASET)
     try:
         client.get_dataset(dataset_ref)
@@ -357,17 +428,35 @@ def ensure_table_exists(client: bigquery.Client) -> None:
 
     table_ref = dataset_ref.table(BIGQUERY_TABLE)
     schema = [
-        bigquery.SchemaField("id",         "STRING",    mode="REQUIRED"),
-        bigquery.SchemaField("title",      "STRING",    mode="NULLABLE"),
-        bigquery.SchemaField("link",       "STRING",    mode="REQUIRED"),
-        bigquery.SchemaField("source",     "STRING",    mode="NULLABLE"),
-        bigquery.SchemaField("pub_date",   "STRING",    mode="NULLABLE"),
-        bigquery.SchemaField("content",    "STRING",    mode="NULLABLE"),
-        bigquery.SchemaField("crawl_date", "TIMESTAMP", mode="REQUIRED"),
+        bigquery.SchemaField("id",             "STRING",    mode="REQUIRED"),
+        bigquery.SchemaField("title",          "STRING",    mode="NULLABLE"),
+        bigquery.SchemaField("link",           "STRING",    mode="REQUIRED"),
+        bigquery.SchemaField("source",         "STRING",    mode="NULLABLE"),
+        bigquery.SchemaField("pub_date",       "STRING",    mode="NULLABLE"),
+        bigquery.SchemaField("content",        "STRING",    mode="NULLABLE"),
+        bigquery.SchemaField("crawl_date",     "TIMESTAMP", mode="REQUIRED"),
+        # P2.2 — quality tracking fields
+        bigquery.SchemaField("crawl_status",   "STRING",    mode="NULLABLE"),  # "ok" | "empty" | "short"
+        bigquery.SchemaField("content_length", "INTEGER",   mode="NULLABLE"),
     ]
-    table = bigquery.Table(table_ref, schema=schema)
-    client.create_table(table, exists_ok=True)
-    logger.info("Table %s.%s.%s is ready", BIGQUERY_PROJECT, BIGQUERY_DATASET, BIGQUERY_TABLE)
+
+    try:
+        existing_table = client.get_table(table_ref)
+        # P2.2 — schema migration: add any new nullable fields to the existing table
+        existing_names = {f.name for f in existing_table.schema}
+        new_fields = [f for f in schema if f.name not in existing_names]
+        if new_fields:
+            updated_schema = list(existing_table.schema) + new_fields
+            existing_table.schema = updated_schema
+            client.update_table(existing_table, ["schema"])
+            logger.info("Schema migrated: added fields %s", [f.name for f in new_fields])
+        else:
+            logger.info("Table %s.%s.%s schema is up-to-date.", BIGQUERY_PROJECT, BIGQUERY_DATASET, BIGQUERY_TABLE)
+    except Exception:
+        # Table does not exist yet — create it
+        table = bigquery.Table(table_ref, schema=schema)
+        client.create_table(table, exists_ok=True)
+        logger.info("Table %s.%s.%s created.", BIGQUERY_PROJECT, BIGQUERY_DATASET, BIGQUERY_TABLE)
 
 
 def insert_rows(client: bigquery.Client, rows: list[dict]) -> int:
@@ -383,7 +472,6 @@ def insert_rows(client: bigquery.Client, rows: list[dict]) -> int:
 
     if errors:
         logger.error("BigQuery insert errors: %s", errors)
-        # Count successfully inserted rows (approximate via absence of errors per row)
         failed = len(errors)
         return len(rows) - failed
 
@@ -401,10 +489,15 @@ def collect_ai_news(request):
 
     Flow:
       1. Parse RSS feeds → collect AI-related links
-      2. Deduplicate against existing BigQuery rows
+         - Cross-source title dedup (P1.2)
+         - Filter video/advertorial content (P1.3)
+      2. Deduplicate against existing BigQuery rows (P2.3 parameterized query)
       3. Crawl full article content for new links
+         - Skip articles with content too short (P1.1)
+         - Track crawl failure per domain (P2.1)
+         - Save crawl_status and content_length (P2.2)
       4. Insert enriched rows into BigQuery
-      5. Return a JSON summary
+      5. Return a JSON summary including crawl quality stats
     """
     run_start = datetime.now(timezone.utc)
     logger.info("=== collect_ai_news triggered at %s ===", run_start.isoformat())
@@ -426,21 +519,44 @@ def collect_ai_news(request):
     rows_to_insert: list[dict] = []
     crawl_date_str = run_start.isoformat()
 
+    # P2.1 — track crawl quality per domain
+    crawl_stats: dict = {"ok": 0, "skipped_short": 0, "failed_domains": {}}
+
     for i, article in enumerate(new_articles):
-        link  = article["link"]
-        title = article["title"]
+        link   = article["link"]
+        title  = article["title"]
+        domain = article.get("source", "unknown")
         logger.info("[%d/%d] Crawling: %s", i + 1, len(new_articles), title[:60])
 
         content = crawl_content(link)
+        content_len = len(content.strip())
+
+        # P1.1 — skip articles where content is too short to be a real article
+        if content_len < MIN_CONTENT_LENGTH:
+            crawl_stats["skipped_short"] += 1
+            crawl_stats["failed_domains"][domain] = crawl_stats["failed_domains"].get(domain, 0) + 1
+            logger.warning(
+                "  Skipped (content too short: %d chars) [%s]: %s",
+                content_len, domain, title[:60],
+            )
+            time.sleep(random.uniform(1.0, 3.0))
+            continue
+
+        crawl_stats["ok"] += 1
+
+        # P2.2 — store crawl quality metadata alongside the article
+        crawl_status = "ok" if content_len >= MIN_CONTENT_LENGTH else "short"
 
         rows_to_insert.append({
-            "id":         str(uuid.uuid4()),
-            "title":      title,
-            "link":       link,
-            "source":     article.get("source", ""),
-            "pub_date":   article.get("pub_date", ""),
-            "content":    content,
-            "crawl_date": crawl_date_str,
+            "id":             str(uuid.uuid4()),
+            "title":          title,
+            "link":           link,
+            "source":         domain,
+            "pub_date":       article.get("pub_date", ""),
+            "content":        content,
+            "crawl_date":     crawl_date_str,
+            "crawl_status":   crawl_status,
+            "content_length": content_len,
         })
 
         # Polite delay to avoid hammering servers
@@ -460,11 +576,15 @@ def collect_ai_news(request):
     run_end = datetime.now(timezone.utc)
     elapsed = (run_end - run_start).total_seconds()
 
+    # P2.1 — include crawl quality stats in the response for observability
     summary = {
         "status":           "ok",
         "rss_articles":     len(articles),
         "new_articles":     len(new_articles),
         "inserted":         inserted_total,
+        "crawl_ok":         crawl_stats["ok"],
+        "crawl_skipped":    crawl_stats["skipped_short"],
+        "failed_domains":   crawl_stats["failed_domains"],
         "elapsed_seconds":  round(elapsed, 1),
         "run_at":           crawl_date_str,
     }
