@@ -184,7 +184,7 @@ jobs:
             --timeout=540s \
             --max-instances=3 \
             --min-instances=0 \
-            --set-env-vars="GCP_PROJECT=${{ secrets.GCP_PROJECT_ID }},BQ_DATASET=ai_news_data,GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}" \
+            --set-env-vars="GCP_PROJECT=${{ secrets.GCP_PROJECT_ID }},BQ_DATASET=ai_news_data,USE_VERTEX=true,VERTEX_LOCATION=${{ env.GCP_REGION }},GEMINI_MODEL=gemini-2.5-flash,PROMPT_VERSION=v2.0" \
             --project=${{ secrets.GCP_PROJECT_ID }}
 
       - name: Print service URL
