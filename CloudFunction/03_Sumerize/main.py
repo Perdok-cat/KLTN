@@ -19,8 +19,8 @@ logger = logging.getLogger(__name__)
 # Configuration  (override via Cloud Function environment variables)
 # ---------------------------------------------------------------------------
 
-GCP_PROJECT      = os.environ.get("GCP_PROJECT",      "your-gcp-project-id")
-BQ_DATASET       = os.environ.get("BQ_DATASET",       "ai_news")
+GCP_PROJECT      = os.environ.get("GCP_PROJECT",      "project-e5ef1531-7ef9-4232-b30")
+BQ_DATASET       = os.environ.get("BQ_DATASET",       "ai_news_data")
 BQ_SOURCE_TABLE  = os.environ.get("BQ_SOURCE_TABLE",  "labeled_articles")
 BQ_OUTPUT_TABLE  = os.environ.get("BQ_OUTPUT_TABLE",  "summarized_articles")
 

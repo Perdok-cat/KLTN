@@ -50,8 +50,8 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ── Configuration ──────────────────────────────────────────────────────────────
-GCP_PROJECT       = os.environ.get("GCP_PROJECT",         "your-gcp-project-id")
-SRC_BQ_DATASET    = os.environ.get("SRC_BQ_DATASET",      "ai_news")
+GCP_PROJECT       = os.environ.get("GCP_PROJECT",         "project-e5ef1531-7ef9-4232-b30")
+SRC_BQ_DATASET    = os.environ.get("SRC_BQ_DATASET",      "ai_news_data")
 SRC_LABELED_TABLE = os.environ.get("SRC_LABELED_TABLE",   "labeled_articles")
 SRC_HITL_TABLE    = os.environ.get("SRC_HITL_TABLE",      "hitl_reviews")
 DST_BQ_DATASET    = os.environ.get("DST_BQ_DATASET",      "mlops_dataset")

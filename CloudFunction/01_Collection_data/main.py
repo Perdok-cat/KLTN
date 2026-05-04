@@ -7,11 +7,12 @@ from bs4 import BeautifulSoup
 import time
 import random
 import json
+import re
 import uuid
 import logging
+import os
 from datetime import datetime, timezone
 from urllib.parse import urlparse
-from typing import Optional
 
 
 from google.cloud import bigquery
@@ -20,14 +21,14 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Configuration
+# Configuration  (override via Cloud Function environment variables)
 # ---------------------------------------------------------------------------
 
-BIGQUERY_PROJECT = "your-gcp-project-id"      # TODO: replace with your GCP project ID
-BIGQUERY_DATASET = "ai_news"
+BIGQUERY_PROJECT = os.environ.get("BIGQUERY_PROJECT", "project-e5ef1531-7ef9-4232-b30")
+BIGQUERY_DATASET = "ai_news_data"
 BIGQUERY_TABLE   = "raw_articles"
 
-MAX_ARTICLES_PER_RUN = 500   # cap to avoid Cloud Function timeout
+MAX_ARTICLES_PER_RUN = 10   # cap to avoid Cloud Function timeout
 
 RSS_URLS = [
     # --- NHÓM TIN CÔNG NGHỆ CHUYÊN BIỆT ---
@@ -443,7 +444,7 @@ def collect_ai_news(request):
         })
 
         # Polite delay to avoid hammering servers
-        #time.sleep(random.uniform(1.0, 3.0))
+        time.sleep(random.uniform(1.0, 3.0))
 
         # Batch-insert every 50 rows to keep memory usage bounded
         if len(rows_to_insert) >= 50:

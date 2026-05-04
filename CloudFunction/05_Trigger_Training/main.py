@@ -41,7 +41,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ── Configuration ──────────────────────────────────────────────────────────────
-GCP_PROJECT         = os.environ.get("GCP_PROJECT",         "your-gcp-project-id")
+GCP_PROJECT         = os.environ.get("GCP_PROJECT",         "project-e5ef1531-7ef9-4232-b30")
 GCP_LOCATION        = os.environ.get("GCP_LOCATION",        "us-central1")
 GCS_BUCKET          = os.environ.get("GCS_BUCKET",          "")
 GCS_MODEL_PREFIX    = os.environ.get("GCS_MODEL_PREFIX",    "models/")
@@ -278,10 +278,10 @@ def trigger_training(request):
     ensure_metadata_table()
 
     # ── Guard 1: Cooldown ──────────────────────────────────────────────────
-    ok, reason = _guard_cooldown()
-    if not ok:
-        logger.info("Skipped (cooldown): %s", reason)
-        return {"status": "skipped", "reason": reason}, 200
+    # ok, reason = _guard_cooldown()
+    # if not ok:
+    #     logger.info("Skipped (cooldown): %s", reason)
+    #     return {"status": "skipped", "reason": reason}, 200
 
     # ── Guard 2: Không có job đang chạy ───────────────────────────────────
     ok, reason = _guard_running_jobs()

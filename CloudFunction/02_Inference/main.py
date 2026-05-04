@@ -6,11 +6,9 @@ import re
 import uuid
 import logging
 import unicodedata
-import tempfile
 from datetime import datetime, timezone
 
-import joblib
-from google.cloud import bigquery, storage
+from google.cloud import bigquery, aiplatform
 from underthesea import word_tokenize
 
 logging.basicConfig(level=logging.INFO)
@@ -20,18 +18,17 @@ logger = logging.getLogger(__name__)
 # Configuration  (override via Cloud Function environment variables)
 # ---------------------------------------------------------------------------
 
-GCP_PROJECT     = os.environ.get("GCP_PROJECT",     "your-gcp-project-id")
-BQ_DATASET      = os.environ.get("BQ_DATASET",      "ai_news")
+GCP_PROJECT     = os.environ.get("GCP_PROJECT",     "project-e5ef1531-7ef9-4232-b30")
+BQ_DATASET      = os.environ.get("BQ_DATASET",      "ai_news_data")
 BQ_SOURCE_TABLE = os.environ.get("BQ_SOURCE_TABLE", "raw_articles")
 BQ_OUTPUT_TABLE = os.environ.get("BQ_OUTPUT_TABLE", "labeled_articles")
 
-# GCS paths for model artefacts
-GCS_BUCKET  = os.environ.get("GCS_BUCKET",  "your-bucket-name")
-TFIDF_BLOB  = os.environ.get("TFIDF_BLOB",  "models/tfidf_vectorizer.pkl")
-MODEL_BLOB  = os.environ.get("MODEL_BLOB",  "models/LinearSVC.pkl")
+# Vertex AI Configuration
+VERTEX_LOCATION    = os.environ.get("VERTEX_LOCATION",    "us-central1")
+VERTEX_ENDPOINT_ID = os.environ.get("VERTEX_ENDPOINT_ID", "3151060137473474560")
 
 # How many articles to process per invocation
-MAX_ARTICLES_PER_RUN = int(os.environ.get("MAX_ARTICLES_PER_RUN", "200"))
+MAX_ARTICLES_PER_RUN = int(os.environ.get("MAX_ARTICLES_PER_RUN", "10"))
 
 # ---------------------------------------------------------------------------
 # Label mapping  (must match training encoding in src/ML/train.py)
@@ -48,42 +45,22 @@ LABEL_MAP: dict[int, str] = {
 # Module-level singletons  (warm Cloud Function reuses these)
 # ---------------------------------------------------------------------------
 
-_tfidf    = None
-_ml_model = None
-_model_name = ""
+_endpoint = None
+_model_name = "Vertex-AI-Pipeline"
 
+def init_vertex_endpoint() -> None:
+    """Initialize Vertex AI Endpoint connection on cold start."""
+    global _endpoint
+    logger.info("Initializing Vertex AI Endpoint connection...")
+    aiplatform.init(project=GCP_PROJECT, location=VERTEX_LOCATION)
+    _endpoint = aiplatform.Endpoint(endpoint_name=VERTEX_ENDPOINT_ID)
+    logger.info("Vertex AI Endpoint ready.")
 
-def load_models() -> None:
-    """
-    Download TF-IDF vectorizer and classifier from GCS into /tmp,
-    then load them into module-level singletons.
-    Called once on cold start (and again if somehow they become None).
-    """
-    global _tfidf, _ml_model, _model_name
-
-    logger.info("Downloading model artefacts from gs://%s …", GCS_BUCKET)
-    gcs    = storage.Client()
-    bucket = gcs.bucket(GCS_BUCKET)
-
-    tmp_dir    = tempfile.mkdtemp()
-    tfidf_path = os.path.join(tmp_dir, "tfidf.pkl")
-    model_path = os.path.join(tmp_dir, "model.pkl")
-
-    bucket.blob(TFIDF_BLOB).download_to_filename(tfidf_path)
-    bucket.blob(MODEL_BLOB).download_to_filename(model_path)
-
-    _tfidf      = joblib.load(tfidf_path)
-    _ml_model   = joblib.load(model_path)
-    _model_name = os.path.splitext(os.path.basename(MODEL_BLOB))[0]
-    logger.info("Models loaded: tfidf=%s  model=%s", TFIDF_BLOB, _model_name)
-
-
-def get_models():
-    """Return (tfidf, model) — loading from GCS on first call."""
-    if _tfidf is None or _ml_model is None:
-        load_models()
-    return _tfidf, _ml_model
-
+def get_endpoint():
+    """Return endpoint — connecting on first call."""
+    if _endpoint is None:
+        init_vertex_endpoint()
+    return _endpoint
 
 # ---------------------------------------------------------------------------
 # Text preprocessing  (identical to src/ML/inference.py)
@@ -99,69 +76,46 @@ def clean_text(text: str) -> str:
     text = re.sub(r"\s+",               " ", text).strip()
     return text
 
-
 def tokenize(text: str) -> str:
     """Vietnamese word tokenisation using underthesea."""
     return word_tokenize(text, format="text")
 
-
 def build_feature_text(title: str, content: str) -> str:
-    """
-    Title is repeated twice to weight it more heavily — mirrors the
-    training pipeline in src/ML/inference.py:
-        df["text"] = df["title"] + " " + df["title"] + " " + df["content"]
-    """
     raw = f"{title} {title} {content}"
     return tokenize(clean_text(raw))
 
-
 # ---------------------------------------------------------------------------
-# Confidence scoring
+# Confidence scoring & Inference
 # ---------------------------------------------------------------------------
-
-def score_to_confidence(score: float) -> str:
-    """Convert a normalised [0, 1] score to a human-readable confidence level."""
-    if score >= 0.75:
-        return "high"
-    if score >= 0.50:
-        return "medium"
-    return "low"
-
 
 def predict_single(title: str, content: str) -> dict:
     """
-    Run the full ML pipeline on one article.
+    Call Vertex AI Endpoint for inference.
     Returns {"label", "confidence", "model_used"}.
     """
     if not content or len(content.strip()) < 50:
         return {"label": "NOISE", "confidence": "high", "model_used": "rule"}
 
-    tfidf, model = get_models()
+    endpoint = get_endpoint()
 
+    # 1. Làm sạch và Tokenize (KHÔNG vector hóa ở đây nữa)
     text = build_feature_text(title, content)
-    X    = tfidf.transform([text])
-    pred = int(model.predict(X)[0])
+
+    # 2. Gửi chuỗi văn bản trực tiếp sang Vertex AI
+    # Container Scikit-Learn của Vertex AI sẽ tự động chạy text qua Pipeline (TF-IDF -> SVC)
+    instances = [text]
+
+    # 3. Gọi Vertex AI Endpoint
+    response = endpoint.predict(instances=instances)
+
+    # 4. Giải mã kết quả
+    pred = int(response.predictions[0])
     label = LABEL_MAP.get(pred, "NOISE")
 
-    # Derive confidence from decision scores / probabilities
+    # Điểm confidence tạm để mức mặc định với SVC qua Vertex API
     confidence = "medium"
-    try:
-        if hasattr(model, "predict_proba"):
-            proba      = model.predict_proba(X)[0]
-            max_prob   = float(proba.max())
-            confidence = score_to_confidence(max_prob)
-        elif hasattr(model, "decision_function"):
-            scores     = model.decision_function(X)[0]
-            # Normalise so the winning margin ≈ probability
-            exp_scores = [2 ** s for s in scores]
-            total      = sum(exp_scores)
-            max_norm   = max(exp_scores) / total if total > 0 else 0.5
-            confidence = score_to_confidence(max_norm)
-    except Exception:
-        pass
 
     return {"label": label, "confidence": confidence, "model_used": _model_name}
-
 
 # ---------------------------------------------------------------------------
 # BigQuery helpers
@@ -170,9 +124,7 @@ def predict_single(title: str, content: str) -> dict:
 def _full_table(table: str) -> str:
     return f"`{GCP_PROJECT}.{BQ_DATASET}.{table}`"
 
-
 def ensure_output_table(client: bigquery.Client) -> None:
-    """Create the labeled_articles table if it does not exist yet."""
     dataset_ref = bigquery.DatasetReference(GCP_PROJECT, BQ_DATASET)
     try:
         client.get_dataset(dataset_ref)
@@ -197,14 +149,8 @@ def ensure_output_table(client: bigquery.Client) -> None:
     ]
     table_ref = bigquery.TableReference(dataset_ref, BQ_OUTPUT_TABLE)
     client.create_table(bigquery.Table(table_ref, schema=schema), exists_ok=True)
-    logger.info("Output table %s.%s.%s is ready.", GCP_PROJECT, BQ_DATASET, BQ_OUTPUT_TABLE)
-
 
 def fetch_unlabeled_articles(client: bigquery.Client) -> list[dict]:
-    """
-    Return up to MAX_ARTICLES_PER_RUN articles from raw_articles whose link
-    does not yet appear in labeled_articles.
-    """
     query = f"""
         SELECT
             r.id, r.title, r.link, r.source, r.pub_date, r.content,
@@ -220,7 +166,6 @@ def fetch_unlabeled_articles(client: bigquery.Client) -> list[dict]:
     try:
         rows = list(client.query(query).result())
     except Exception as exc:
-        # labeled_articles may not exist on the very first run
         logger.warning("JOIN query failed (%s) — falling back to full scan.", exc)
         query = f"""
             SELECT
@@ -233,12 +178,9 @@ def fetch_unlabeled_articles(client: bigquery.Client) -> list[dict]:
         """
         rows = list(client.query(query).result())
 
-    logger.info("Fetched %d unlabeled articles.", len(rows))
     return [dict(row) for row in rows]
 
-
 def insert_rows(client: bigquery.Client, rows: list[dict]) -> int:
-    """Stream-insert a batch of rows; returns the number successfully inserted."""
     if not rows:
         return 0
     table_id = f"{GCP_PROJECT}.{BQ_DATASET}.{BQ_OUTPUT_TABLE}"
@@ -248,45 +190,23 @@ def insert_rows(client: bigquery.Client, rows: list[dict]) -> int:
         return max(0, len(rows) - len(errors))
     return len(rows)
 
-
 # ---------------------------------------------------------------------------
 # Cloud Function entry point
 # ---------------------------------------------------------------------------
 
 @functions_framework.http
 def run_inference(request):
-    """
-    HTTP-triggered Cloud Function — ML-only inference pipeline.
-
-    Flow:
-      1. Load TF-IDF + sklearn model from GCS (cached after first call)
-      2. Fetch articles from raw_articles that are not yet in labeled_articles
-      3. Preprocess text (clean → underthesea tokenize) and predict label
-      4. Stream-insert results into labeled_articles
-      5. Return a JSON summary
-
-    Required environment variables:
-      GCP_PROJECT   – GCP project ID
-      GCS_BUCKET    – GCS bucket name containing model .pkl files
-      TFIDF_BLOB    – path inside bucket for TF-IDF vectorizer  (default: models/tfidf_vectorizer.pkl)
-      MODEL_BLOB    – path inside bucket for classifier          (default: models/LinearSVC.pkl)
-
-    Optional environment variables:
-      BQ_DATASET, BQ_SOURCE_TABLE, BQ_OUTPUT_TABLE, MAX_ARTICLES_PER_RUN
-    """
     run_start      = datetime.now(timezone.utc)
     labeled_at_str = run_start.isoformat()
-    logger.info("=== run_inference (ML) started at %s ===", labeled_at_str)
+    logger.info("=== run_inference (Vertex AI Pipeline) started at %s ===", labeled_at_str)
 
     bq = bigquery.Client(project=GCP_PROJECT)
     ensure_output_table(bq)
 
-    # ── 1. Fetch unlabeled articles ───────────────────────────────────────────
     articles = fetch_unlabeled_articles(bq)
     if not articles:
         return {"status": "ok", "message": "No unlabeled articles found.", "labeled": 0}, 200
 
-    # ── 2. Classify ──────────────────────────────────────────────────────────
     rows_to_insert: list[dict] = []
     label_counts: dict[str, int] = {}
     total_labeled = 0
@@ -302,6 +222,12 @@ def run_inference(request):
         label  = result["label"]
         label_counts[label] = label_counts.get(label, 0) + 1
 
+        raw_crawl_date = article.get("crawl_date")
+        clean_crawl_date = None
+
+        if raw_crawl_date:
+            clean_crawl_date = str(raw_crawl_date).split('+')[0].strip()
+
         rows_to_insert.append({
             "id":          str(uuid.uuid4()),
             "title":       title,
@@ -309,25 +235,21 @@ def run_inference(request):
             "source":      article.get("source",     ""),
             "pub_date":    article.get("pub_date",   ""),
             "content":     content,
-            "crawl_date":  article.get("crawl_date", None),
+            "crawl_date":  clean_crawl_date,
             "label":       label,
             "confidence":  result.get("confidence",  ""),
             "model_used":  result.get("model_used",  ""),
             "labeled_at":  labeled_at_str,
         })
 
-        # Batch-insert every 50 rows
         if len(rows_to_insert) >= 50:
             batch = insert_rows(bq, rows_to_insert)
             total_labeled += batch
-            logger.info("Batch inserted %d rows (total: %d)", batch, total_labeled)
             rows_to_insert = []
 
-    # ── 3. Insert remaining rows ──────────────────────────────────────────────
     if rows_to_insert:
         batch = insert_rows(bq, rows_to_insert)
         total_labeled += batch
-        logger.info("Final batch: %d rows (total: %d)", batch, total_labeled)
 
     elapsed = round((datetime.now(timezone.utc) - run_start).total_seconds(), 1)
 

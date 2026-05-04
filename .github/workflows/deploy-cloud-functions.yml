@@ -1,0 +1,323 @@
+name: Deploy Cloud Functions
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "CloudFunction/**"
+      - ".github/workflows/deploy-cloud-functions.yml"
+
+  workflow_dispatch:
+    inputs:
+      function:
+        description: "Function to deploy"
+        required: false
+        default: "all"
+        type: choice
+        options:
+          - all
+          - crawldata
+          - inference
+          - sumerize
+          - preprocess
+          - trigger-training
+
+env:
+  GCP_REGION: ${{ vars.GCP_REGION }}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Job 1: Phát hiện function nào thay đổi
+# ──────────────────────────────────────────────────────────────────────────────
+jobs:
+  detect-changes:
+    name: Detect Changed Functions
+    runs-on: ubuntu-latest
+    outputs:
+      crawldata:        ${{ steps.filter.outputs.crawldata }}
+      inference:        ${{ steps.filter.outputs.inference }}
+      sumerize:         ${{ steps.filter.outputs.sumerize }}
+      preprocess:       ${{ steps.filter.outputs.preprocess }}
+      trigger-training: ${{ steps.filter.outputs.trigger-training }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect changed functions
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            crawldata:
+              - 'CloudFunction/01_Collection_data/**'
+            inference:
+              - 'CloudFunction/02_Inference/**'
+            sumerize:
+              - 'CloudFunction/03_Sumerize/**'
+            preprocess:
+              - 'CloudFunction/04_HITL_Preprocess/**'
+            trigger-training:
+              - 'CloudFunction/05_Trigger_Training/**'
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Shared setup steps (dùng chung cho tất cả deploy jobs)
+# ──────────────────────────────────────────────────────────────────────────────
+
+  # ── CF 01: crawldata ────────────────────────────────────────────────────────
+  deploy-crawldata:
+    name: Deploy crawldata
+    needs: detect-changes
+    if: |
+      needs.detect-changes.outputs.crawldata == 'true' ||
+      (github.event_name == 'workflow_dispatch' &&
+       (github.event.inputs.function == 'all' || github.event.inputs.function == 'crawldata'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account:            ${{ secrets.WIF_SA_EMAIL }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy crawldata
+        run: |
+          gcloud functions deploy crawldata \
+            --gen2 \
+            --region=${{ env.GCP_REGION }} \
+            --runtime=python311 \
+            --source=CloudFunction/01_Collection_data \
+            --entry-point=collect_ai_news \
+            --trigger-http \
+            --allow-unauthenticated \
+            --memory=512Mi \
+            --timeout=540s \
+            --max-instances=5 \
+            --min-instances=0 \
+            --set-env-vars="BIGQUERY_PROJECT=${{ secrets.GCP_PROJECT_ID }}" \
+            --project=${{ secrets.GCP_PROJECT_ID }}
+
+      - name: Print function URL
+        run: |
+          URL=$(gcloud functions describe crawldata \
+            --gen2 --region=${{ env.GCP_REGION }} \
+            --project=${{ secrets.GCP_PROJECT_ID }} \
+            --format="value(serviceConfig.uri)")
+          echo "::notice title=crawldata URL::$URL"
+
+  # ── CF 02: inference ────────────────────────────────────────────────────────
+  deploy-inference:
+    name: Deploy inference
+    needs: detect-changes
+    if: |
+      needs.detect-changes.outputs.inference == 'true' ||
+      (github.event_name == 'workflow_dispatch' &&
+       (github.event.inputs.function == 'all' || github.event.inputs.function == 'inference'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account:            ${{ secrets.WIF_SA_EMAIL }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy inference
+        run: |
+          gcloud functions deploy inference \
+            --gen2 \
+            --region=${{ env.GCP_REGION }} \
+            --runtime=python311 \
+            --source=CloudFunction/02_Inference \
+            --entry-point=run_inference \
+            --trigger-http \
+            --allow-unauthenticated \
+            --memory=2Gi \
+            --timeout=540s \
+            --max-instances=5 \
+            --min-instances=0 \
+            --set-env-vars="GCP_PROJECT=${{ secrets.GCP_PROJECT_ID }},BQ_DATASET=ai_news_data,VERTEX_LOCATION=${{ env.GCP_REGION }},VERTEX_ENDPOINT_ID=${{ secrets.VERTEX_ENDPOINT_ID }}" \
+            --project=${{ secrets.GCP_PROJECT_ID }}
+
+      - name: Print function URL
+        run: |
+          URL=$(gcloud functions describe inference \
+            --gen2 --region=${{ env.GCP_REGION }} \
+            --project=${{ secrets.GCP_PROJECT_ID }} \
+            --format="value(serviceConfig.uri)")
+          echo "::notice title=inference URL::$URL"
+
+  # ── CF 03: sumerize ─────────────────────────────────────────────────────────
+  deploy-sumerize:
+    name: Deploy sumerize
+    needs: detect-changes
+    if: |
+      needs.detect-changes.outputs.sumerize == 'true' ||
+      (github.event_name == 'workflow_dispatch' &&
+       (github.event.inputs.function == 'all' || github.event.inputs.function == 'sumerize'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account:            ${{ secrets.WIF_SA_EMAIL }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy sumerize
+        run: |
+          gcloud functions deploy sumerize \
+            --gen2 \
+            --region=${{ env.GCP_REGION }} \
+            --runtime=python311 \
+            --source=CloudFunction/03_Sumerize \
+            --entry-point=run_summarize \
+            --trigger-http \
+            --allow-unauthenticated \
+            --memory=512Mi \
+            --timeout=540s \
+            --max-instances=3 \
+            --min-instances=0 \
+            --set-env-vars="GCP_PROJECT=${{ secrets.GCP_PROJECT_ID }},BQ_DATASET=ai_news_data,GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}" \
+            --project=${{ secrets.GCP_PROJECT_ID }}
+
+      - name: Print function URL
+        run: |
+          URL=$(gcloud functions describe sumerize \
+            --gen2 --region=${{ env.GCP_REGION }} \
+            --project=${{ secrets.GCP_PROJECT_ID }} \
+            --format="value(serviceConfig.uri)")
+          echo "::notice title=sumerize URL::$URL"
+
+  # ── CF 04: preprocess ───────────────────────────────────────────────────────
+  deploy-preprocess:
+    name: Deploy preprocess
+    needs: detect-changes
+    if: |
+      needs.detect-changes.outputs.preprocess == 'true' ||
+      (github.event_name == 'workflow_dispatch' &&
+       (github.event.inputs.function == 'all' || github.event.inputs.function == 'preprocess'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account:            ${{ secrets.WIF_SA_EMAIL }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy preprocess
+        run: |
+          gcloud functions deploy preprocess \
+            --gen2 \
+            --region=${{ env.GCP_REGION }} \
+            --runtime=python311 \
+            --source=CloudFunction/04_HITL_Preprocess \
+            --entry-point=hitl_preprocess \
+            --trigger-http \
+            --allow-unauthenticated \
+            --memory=1Gi \
+            --timeout=300s \
+            --max-instances=5 \
+            --min-instances=0 \
+            --set-env-vars="GCP_PROJECT=${{ secrets.GCP_PROJECT_ID }},SRC_BQ_DATASET=ai_news_data,TRIGGER_TRAINING_CF_URL=${{ secrets.TRIGGER_TRAINING_CF_URL }}" \
+            --project=${{ secrets.GCP_PROJECT_ID }}
+
+      - name: Print function URL
+        run: |
+          URL=$(gcloud functions describe preprocess \
+            --gen2 --region=${{ env.GCP_REGION }} \
+            --project=${{ secrets.GCP_PROJECT_ID }} \
+            --format="value(serviceConfig.uri)")
+          echo "::notice title=preprocess URL::$URL"
+
+  # ── CF 05: trigger-training ─────────────────────────────────────────────────
+  deploy-trigger-training:
+    name: Deploy trigger-training
+    needs: detect-changes
+    if: |
+      needs.detect-changes.outputs.trigger-training == 'true' ||
+      (github.event_name == 'workflow_dispatch' &&
+       (github.event.inputs.function == 'all' || github.event.inputs.function == 'trigger-training'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account:            ${{ secrets.WIF_SA_EMAIL }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy trigger-training
+        run: |
+          gcloud functions deploy trigger-training \
+            --gen2 \
+            --region=${{ env.GCP_REGION }} \
+            --runtime=python311 \
+            --source=CloudFunction/05_Trigger_Training \
+            --entry-point=trigger_training \
+            --trigger-http \
+            --no-allow-unauthenticated \
+            --memory=512Mi \
+            --timeout=120s \
+            --max-instances=60 \
+            --min-instances=0 \
+            --set-env-vars="\
+          GCP_PROJECT=${{ secrets.GCP_PROJECT_ID }},\
+          GCP_LOCATION=${{ env.GCP_REGION }},\
+          GCS_BUCKET=${{ vars.GCS_BUCKET }},\
+          TRAINING_IMAGE_URI=${{ vars.TRAINING_IMAGE_URI }},\
+          VERTEX_ENDPOINT_ID=${{ secrets.VERTEX_ENDPOINT_ID }},\
+          BQ_MLOPS_DATASET=${{ vars.BQ_MLOPS_DATASET }},\
+          BQ_HITL_TABLE=${{ vars.BQ_HITL_TABLE }},\
+          BQ_ORIGINAL_TABLE=${{ vars.BQ_ORIGINAL_TABLE }},\
+          BQ_METADATA_TABLE=${{ vars.BQ_METADATA_TABLE }},\
+          MIN_HITL_SAMPLES=10,\
+          COOLDOWN_HOURS=6" \
+            --project=${{ secrets.GCP_PROJECT_ID }}
+
+      - name: Print function URL
+        run: |
+          URL=$(gcloud functions describe trigger-training \
+            --gen2 --region=${{ env.GCP_REGION }} \
+            --project=${{ secrets.GCP_PROJECT_ID }} \
+            --format="value(serviceConfig.uri)")
+          echo "::notice title=trigger-training URL::$URL"
