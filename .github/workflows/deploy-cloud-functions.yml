@@ -92,7 +92,6 @@ jobs:
             --timeout=540s \
             --max-instances=5 \
             --min-instances=0 \
-            --build-env-vars=GOOGLE_FUNCTION_TARGET=collect_ai_news \
             --set-env-vars="BIGQUERY_PROJECT=${{ secrets.GCP_PROJECT_ID }}" \
             --project=${{ secrets.GCP_PROJECT_ID }}
 
@@ -139,7 +138,6 @@ jobs:
             --timeout=540s \
             --max-instances=5 \
             --min-instances=0 \
-            --build-env-vars=GOOGLE_FUNCTION_TARGET=run_inference \
             --set-env-vars="GCP_PROJECT=${{ secrets.GCP_PROJECT_ID }},BQ_DATASET=ai_news_data,VERTEX_LOCATION=${{ env.GCP_REGION }},VERTEX_ENDPOINT_ID=${{ secrets.VERTEX_ENDPOINT_ID }}" \
             --project=${{ secrets.GCP_PROJECT_ID }}
 
@@ -186,7 +184,6 @@ jobs:
             --timeout=540s \
             --max-instances=3 \
             --min-instances=0 \
-            --build-env-vars=GOOGLE_FUNCTION_TARGET=run_summarize \
             --set-env-vars="GCP_PROJECT=${{ secrets.GCP_PROJECT_ID }},BQ_DATASET=ai_news_data,GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}" \
             --project=${{ secrets.GCP_PROJECT_ID }}
 
@@ -233,7 +230,6 @@ jobs:
             --timeout=300s \
             --max-instances=5 \
             --min-instances=0 \
-            --build-env-vars=GOOGLE_FUNCTION_TARGET=hitl_preprocess \
             --set-env-vars="GCP_PROJECT=${{ secrets.GCP_PROJECT_ID }},SRC_BQ_DATASET=ai_news_data,TRIGGER_TRAINING_CF_URL=${{ secrets.TRIGGER_TRAINING_CF_URL }}" \
             --project=${{ secrets.GCP_PROJECT_ID }}
 
