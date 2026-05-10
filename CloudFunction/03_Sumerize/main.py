@@ -151,36 +151,58 @@ def _build_generation_config():
     """
     Return a GenerationConfig with:
     - temperature=0.2        : stable, deterministic output
-    - max_output_tokens=1024 : sufficient for summary + key_points + keywords
+    - max_output_tokens=2048 : headroom for long summaries; 1024 can truncate JSON mid-object
     - response_mime_type     : enforce JSON output at API level
     - response_schema        : enforce exact field structure
-    - thinking_budget=0      : disable Gemini 2.5 thinking mode — it is enabled by
-                               default and its chain-of-thought tokens leak into
-                               response.text, breaking JSON parsing.
+    - thinking_budget=0      : disable Gemini 2.5 thinking mode — chain-of-thought tokens
+                               break JSON parsing when they leak into response.text.
+
+    thinking_budget=0 is attempted via three strategies in order:
+      1. ThinkingConfig class  (SDK >= ~1.90)
+      2. dict kwarg            (SDK accepts unknown kwargs and forwards to proto)
+      3. Give up gracefully    (_parse_response strips thinking tags as last resort)
     """
     if USE_VERTEX:
         from vertexai.generative_models import GenerationConfig
-        cfg_kwargs: dict = dict(
+
+        base: dict = dict(
             temperature=0.2,
-            max_output_tokens=1024,
+            max_output_tokens=2048,
             response_mime_type="application/json",
             response_schema=_RESPONSE_SCHEMA,
         )
+
+        # Strategy 1: ThinkingConfig class (preferred, SDK >= ~1.90)
         try:
             from vertexai.generative_models import ThinkingConfig
-            cfg_kwargs["thinking_config"] = ThinkingConfig(thinking_budget=0)
-            logger.info("Thinking mode disabled (ThinkingConfig available).")
-        except ImportError:
-            logger.warning(
-                "ThinkingConfig not found — upgrade google-cloud-aiplatform>=1.71.0 "
-                "to disable Gemini 2.5 thinking mode and avoid JSON parse errors."
-            )
-        return GenerationConfig(**cfg_kwargs)
+            cfg = GenerationConfig(**base, thinking_config=ThinkingConfig(thinking_budget=0))
+            logger.info("Thinking mode disabled via ThinkingConfig class.")
+            return cfg
+        except (ImportError, TypeError):
+            pass
+
+        # Strategy 2: dict kwarg — SDK forwards unknown keys to the underlying proto
+        try:
+            cfg = GenerationConfig(**base, thinking_config={"thinking_budget": 0})
+            logger.info("Thinking mode disabled via dict kwarg.")
+            return cfg
+        except TypeError:
+            pass
+
+        # Strategy 3: cannot disable thinking in this SDK version;
+        # _parse_response strips <thinking> tags defensively as a fallback.
+        logger.info(
+            "Thinking mode could not be disabled (SDK too old). "
+            "_parse_response will strip thinking tags. "
+            "Pin google-cloud-aiplatform>=1.90.0 in requirements.txt to fix."
+        )
+        return GenerationConfig(**base)
+
     else:
         import google.generativeai as genai
         return genai.GenerationConfig(
             temperature=0.2,
-            max_output_tokens=1024,
+            max_output_tokens=2048,
             response_mime_type="application/json",
             response_schema=_RESPONSE_SCHEMA,
         )
@@ -291,7 +313,7 @@ def summarize_article(
         try:
             response = model.generate_content(user_prompt, generation_config=gen_cfg)
 
-            # Check for safety block before parsing
+            # Check finish_reason before parsing
             if hasattr(response, "candidates") and response.candidates:
                 finish_reason = str(response.candidates[0].finish_reason)
                 if "SAFETY" in finish_reason:
@@ -299,6 +321,14 @@ def summarize_article(
                     last_error_msg  = f"finish_reason={finish_reason}"
                     logger.warning("[%s] Safety block on attempt %d.", short_link, attempt + 1)
                     break  # safety blocks won't improve with retries
+                if "MAX_TOKENS" in finish_reason:
+                    # Output was cut off — JSON is incomplete, will fail to parse.
+                    # Logged here so the cause is visible before the JSONDecodeError.
+                    logger.warning(
+                        "[%s] Output truncated (finish_reason=MAX_TOKENS) on attempt %d. "
+                        "Consider raising MAX_CONTENT_CHARS or max_output_tokens.",
+                        short_link, attempt + 1,
+                    )
 
             parsed = _parse_response(response.text)
 
