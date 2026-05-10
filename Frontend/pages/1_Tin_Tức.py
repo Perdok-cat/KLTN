@@ -280,6 +280,94 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+st.markdown(
+    """
+    <style>
+    .news-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 1rem;
+        align-items: stretch;
+    }
+
+    .news-card {
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        padding: 0.98rem 1rem 1rem;
+        border: 1px solid rgba(148, 163, 184, 0.28);
+        border-radius: 18px;
+        background: #ffffff;
+        box-shadow: 0 10px 26px rgba(15, 23, 42, 0.05);
+    }
+
+    .news-card__title {
+        margin-top: 0.72rem;
+        color: #0f172a;
+        font-size: 1.02rem;
+        font-weight: 820;
+        line-height: 1.35;
+        min-height: 2.75em;
+    }
+
+    .news-card__preview {
+        margin-top: 0.58rem;
+        color: #475569;
+        font-size: 0.92rem;
+        line-height: 1.58;
+        display: -webkit-box;
+        -webkit-line-clamp: 3;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+        min-height: 4.74em;
+    }
+
+    .news-card .keywords {
+        min-height: 2.15rem;
+        margin-top: 0.7rem;
+        overflow: hidden;
+    }
+
+    .news-card .keywords--empty {
+        display: block;
+    }
+
+    .news-card__footer {
+        margin-top: auto;
+        padding-top: 0.68rem;
+    }
+
+    .read-link {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 100%;
+        min-height: 2.55rem;
+        border: 1px solid #cbd5e1;
+        border-radius: 12px;
+        background: #ffffff;
+        color: #0f172a;
+        font-weight: 760;
+        text-decoration: none;
+        box-shadow: 0 8px 18px rgba(15, 23, 42, 0.06);
+    }
+
+    .read-link:hover {
+        background: #eff6ff;
+        border-color: #2563eb;
+        color: #1d4ed8;
+    }
+
+    @media (max-width: 900px) {
+        .news-grid {
+            grid-template-columns: 1fr;
+        }
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 toolbar_cols = st.columns([2.2, 1.1])
 with toolbar_cols[0]:
     chips = [
@@ -298,34 +386,36 @@ with toolbar_cols[1]:
 
 st.markdown(section_header("Danh sách bài viết", "Chọn bài để đọc chi tiết."), unsafe_allow_html=True)
 
+def build_card(article: dict) -> str:
+    article_id = escape_html(article.get("id") or "")
+    title = escape_html(article.get("title", "—"))
+    preview = trim_text(article.get("summary") or article.get("snippet") or "", 240)
+    preview_html = escape_html(preview or "Không có tóm tắt.")
+    keywords_html = (
+        keyword_chips(article["keywords"], limit=6)
+        if article.get("keywords")
+        else '<div class="keywords keywords--empty"></div>'
+    )
+    return f"""
+    <article class="news-card">
+        {article_meta_html(article, LABEL_COLORS)}
+        <div class="news-card__title">{title}</div>
+        <div class="news-card__preview">{preview_html}</div>
+        {keywords_html}
+        <div class="news-card__footer">
+            <a class="read-link" href="?article_id={article_id}">Đọc →</a>
+        </div>
+    </article>
+    """
+
 if not articles:
     st.markdown(
         '<div class="empty-state">Không tìm thấy bài viết nào phù hợp.</div>',
         unsafe_allow_html=True,
     )
 else:
-    for index in range(0, len(articles), 2):
-        row = articles[index : index + 2]
-        cols = st.columns(2)
-        for col, article in zip(cols, row):
-            article_id = str(article.get("id") or f"row_{index}")
-            preview = article.get("summary") or article.get("snippet") or ""
-            with col:
-                with st.container(border=True):
-                    st.markdown(article_meta_html(article, LABEL_COLORS), unsafe_allow_html=True)
-                    st.markdown(
-                        f'<div class="article-title">{escape_html(article.get("title", "—"))}</div>',
-                        unsafe_allow_html=True,
-                    )
-                    if preview:
-                        st.markdown(
-                            f'<div class="article-preview">{escape_html(trim_text(preview, 240))}</div>',
-                            unsafe_allow_html=True,
-                        )
-                    if article.get("keywords"):
-                        st.markdown(keyword_chips(article["keywords"], limit=6), unsafe_allow_html=True)
-                    if st.button("Đọc →", key=f"read_{article_id}", use_container_width=True):
-                        open_detail(article_id)
+    grid_html = "".join(build_card(article) for article in articles)
+    st.markdown(f'<div class="news-grid">{grid_html}</div>', unsafe_allow_html=True)
 
 st.divider()
 p1, p2, p3 = st.columns([1, 2, 1])
