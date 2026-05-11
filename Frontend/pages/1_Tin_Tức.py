@@ -233,32 +233,31 @@ if st.session_state["view_article"] is not None:
             if article.get("link")
             else ""
         )
+        detail_rail_html = (
+            '<div class="detail-rail">'
+            '<div class="detail-rail__section">'
+            '<div class="detail-rail__title">Tổng quan</div>'
+            f'<div class="detail-rail__chips">{"".join(rail_chips)}</div>'
+            f'<div class="info-row"><span>Nhãn</span><b>{escape_html(label_name(label))}</b></div>'
+            f'<div class="info-row"><span>Độ tin cậy</span><b>{escape_html(confidence or "—")}</b></div>'
+            f'<div class="info-row"><span>Model</span><b>{escape_html(article.get("model_used") or "—")}</b></div>'
+            f'<div class="info-row"><span>Nguồn</span><b>{escape_html(article.get("source") or "—")}</b></div>'
+            '</div>'
+            '<div class="detail-rail__section">'
+            '<div class="detail-rail__title">Dấu thời gian</div>'
+            f'<div class="info-row"><span>Ngày đăng</span><b>{escape_html(pub_date_text)}</b></div>'
+            f'<div class="info-row"><span>Labeled at</span><b>{escape_html(labeled_at_text)}</b></div>'
+            f'<div class="info-row"><span>ID</span><b>{escape_html(str(article.get("id") or "—"))}</b></div>'
+            f'{rail_link}'
+            '</div>'
+            '<div class="detail-rail__section">'
+            '<div class="detail-rail__title">Từ khóa</div>'
+            f'{rail_keywords}'
+            '</div>'
+            '</div>'
+        )
         st.markdown(
-            f"""
-            <div class="detail-rail">
-                <div class="detail-rail__section">
-                    <div class="detail-rail__title">Tổng quan</div>
-                    <div class="detail-rail__chips">{"".join(rail_chips)}</div>
-                    <div class="info-row"><span>Nhãn</span><b>{escape_html(label_name(label))}</b></div>
-                    <div class="info-row"><span>Độ tin cậy</span><b>{escape_html(confidence or "—")}</b></div>
-                    <div class="info-row"><span>Model</span><b>{escape_html(article.get("model_used") or "—")}</b></div>
-                    <div class="info-row"><span>Nguồn</span><b>{escape_html(article.get("source") or "—")}</b></div>
-                </div>
-
-                <div class="detail-rail__section">
-                    <div class="detail-rail__title">Dấu thời gian</div>
-                    <div class="info-row"><span>Ngày đăng</span><b>{escape_html(pub_date_text)}</b></div>
-                    <div class="info-row"><span>Labeled at</span><b>{escape_html(labeled_at_text)}</b></div>
-                    <div class="info-row"><span>ID</span><b>{escape_html(str(article.get("id") or "—"))}</b></div>
-                    {rail_link}
-                </div>
-
-                <div class="detail-rail__section">
-                    <div class="detail-rail__title">Từ khóa</div>
-                    {rail_keywords}
-                </div>
-            </div>
-            """,
+            detail_rail_html,
             unsafe_allow_html=True,
         )
 
