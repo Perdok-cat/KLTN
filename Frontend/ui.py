@@ -45,6 +45,8 @@ DATE_FORMATS = (
     "%Y-%m-%d %H:%M:%S%z",
     "%Y-%m-%d %H:%M:%S",
     "%Y-%m-%d",
+    "%a, %d %b %Y %H:%M:%S %z",
+    "%a, %d %B %Y %H:%M:%S %z",
     "%a, %d %b %Y",
     "%a, %d %B %Y",
 )
@@ -367,6 +369,8 @@ def apply_global_styles() -> None:
             border-radius: 999px;
             white-space: nowrap;
             line-height: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
         }
 
         .ai-chip {
@@ -393,6 +397,7 @@ def apply_global_styles() -> None:
             flex-wrap: wrap;
             gap: 0.44rem;
             align-items: center;
+            min-width: 0;
         }
 
         .keywords {
@@ -405,10 +410,54 @@ def apply_global_styles() -> None:
             color: #0f172a;
             font-weight: 820;
             line-height: 1.35;
+            overflow-wrap: anywhere;
         }
 
         .article-title {
             font-size: 1.04rem;
+        }
+
+        .recent-card__body {
+            min-height: 14rem;
+        }
+
+        .recent-card__title {
+            margin-top: 0.72rem;
+            color: #0f172a;
+            font-size: 1.04rem;
+            font-weight: 820;
+            line-height: 1.35;
+            min-height: 2.7em;
+            overflow: hidden;
+            overflow-wrap: anywhere;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+        }
+
+        .recent-card__preview {
+            margin-top: 0.62rem;
+            color: #475569;
+            font-size: 0.92rem;
+            line-height: 1.62;
+            min-height: 4.86em;
+            overflow: hidden;
+            overflow-wrap: anywhere;
+            display: -webkit-box;
+            -webkit-line-clamp: 3;
+            -webkit-box-orient: vertical;
+        }
+
+        .recent-card__keywords {
+            min-height: 2.3rem;
+            max-height: 2.3rem;
+            margin-top: 0.72rem;
+            overflow: hidden;
+        }
+
+        .recent-card__keywords .keywords {
+            margin-top: 0;
+            flex-wrap: nowrap;
         }
 
         .feature-title {
@@ -420,12 +469,14 @@ def apply_global_styles() -> None:
             color: #475569;
             font-size: 0.92rem;
             line-height: 1.62;
+            overflow-wrap: anywhere;
         }
 
         .reader-body {
             color: #1e293b;
             font-size: 1rem;
             line-height: 1.8;
+            overflow-wrap: anywhere;
         }
 
         .detail-title {
@@ -439,11 +490,13 @@ def apply_global_styles() -> None:
         .info-row {
             display: flex;
             justify-content: space-between;
+            align-items: flex-start;
             gap: 0.8rem;
             padding: 0.62rem 0;
             border-bottom: 1px solid #e2e8f0;
             color: #475569;
             font-size: 0.87rem;
+            min-width: 0;
         }
 
         .info-row:last-child {
@@ -452,6 +505,63 @@ def apply_global_styles() -> None:
 
         .info-row b {
             color: #0f172a;
+            max-width: 68%;
+            text-align: right;
+            line-height: 1.42;
+            overflow-wrap: anywhere;
+        }
+
+        .detail-rail {
+            position: sticky;
+            top: 5.2rem;
+            padding: 1rem;
+            border: 1px solid rgba(148, 163, 184, 0.30);
+            border-radius: var(--ai-radius);
+            background: #ffffff;
+            box-shadow: 0 12px 28px rgba(15, 23, 42, 0.07);
+        }
+
+        .detail-rail__section + .detail-rail__section {
+            margin-top: 1rem;
+            padding-top: 1rem;
+            border-top: 1px solid #e2e8f0;
+        }
+
+        .detail-rail__title {
+            margin: 0 0 0.65rem;
+            color: #0f172a;
+            font-size: 0.94rem;
+            font-weight: 820;
+            line-height: 1.3;
+        }
+
+        .detail-rail__chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.45rem;
+            margin-bottom: 0.35rem;
+        }
+
+        .detail-link {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 100%;
+            min-height: 2.55rem;
+            margin-top: 0.85rem;
+            border: 1px solid #2563eb;
+            border-radius: 12px;
+            background: #2563eb;
+            color: #ffffff;
+            font-weight: 780;
+            text-decoration: none;
+            box-shadow: 0 10px 20px rgba(37, 99, 235, 0.18);
+        }
+
+        .detail-link:hover {
+            background: #1d4ed8;
+            border-color: #1d4ed8;
+            color: #ffffff;
         }
 
         .pager-label {

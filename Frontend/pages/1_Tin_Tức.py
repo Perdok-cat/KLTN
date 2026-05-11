@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+from urllib.parse import quote
 
 import requests
 import streamlit as st
@@ -113,10 +114,14 @@ st.session_state.setdefault("current_page", 1)
 query_article = st.query_params.get("article_id")
 if isinstance(query_article, list):
     query_article = query_article[0] if query_article else None
-if "view_article" not in st.session_state:
-    st.session_state["view_article"] = query_article
-elif query_article and st.session_state["view_article"] != query_article:
-    st.session_state["view_article"] = query_article
+pending_article = st.session_state.pop("_pending_article_id", None)
+resolved_article = query_article or pending_article
+if resolved_article:
+    st.session_state["view_article"] = str(resolved_article)
+    if not query_article:
+        st.query_params["article_id"] = str(resolved_article)
+else:
+    st.session_state["view_article"] = None
 
 filter_key = f"{selected_label}|{search_query}|{page_size}"
 if st.session_state.get("_filter_key") != filter_key:
@@ -125,11 +130,13 @@ if st.session_state.get("_filter_key") != filter_key:
 
 
 def clear_detail() -> None:
+    st.session_state.pop("_pending_article_id", None)
     st.session_state["view_article"] = None
     st.query_params.clear()
 
 
 def open_detail(article_id: str) -> None:
+    st.session_state["_pending_article_id"] = article_id
     st.session_state["view_article"] = article_id
     st.query_params["article_id"] = article_id
     st.rerun()
@@ -166,6 +173,8 @@ if st.session_state["view_article"] is not None:
     key_points = article.get("key_points") or []
     keywords = article.get("keywords") or ""
     content = article.get("content") or ""
+    pub_date_text = format_date(article.get("pub_date")) or "—"
+    labeled_at_text = format_date(article.get("labeled_at")) or "—"
 
     st.markdown(
         hero_html(
@@ -212,40 +221,46 @@ if st.session_state["view_article"] is not None:
                 st.info("Không có nội dung.")
 
     with right_col:
-        with st.container(border=True):
-            st.markdown(section_header("Thông tin bài viết", "Metadata và tín hiệu hệ thống."), unsafe_allow_html=True)
-            st.markdown(
-                f"""
-                <div class="info-row"><span>Nhãn</span><b>{escape_html(label_name(label))}</b></div>
-                <div class="info-row"><span>Độ tin cậy</span><b>{escape_html(confidence or "—")}</b></div>
-                <div class="info-row"><span>Model</span><b>{escape_html(article.get("model_used") or "—")}</b></div>
-                <div class="info-row"><span>Nguồn</span><b>{escape_html(article.get("source") or "—")}</b></div>
-                <div class="info-row"><span>Ngày đăng</span><b>{escape_html(article.get("pub_date") or "—")}</b></div>
-                <div class="info-row"><span>Labeled at</span><b>{escape_html(article.get("labeled_at") or "—")}</b></div>
-                """,
-                unsafe_allow_html=True,
-            )
+        rail_chips = [
+            label_chip(label, LABEL_COLORS),
+            confidence_chip(confidence) if confidence else neutral_chip("Tin cậy chưa có", "●", "slate"),
+            neutral_chip(str(article.get("source") or "Nguồn chưa có"), "🌐", "slate"),
+            neutral_chip(pub_date_text, "📅", "slate"),
+        ]
+        rail_keywords = keyword_chips(keywords, limit=12) if keywords else '<div class="empty-state" style="padding:0.95rem 0.9rem;margin:0;background:#f8fafc;">Không có từ khóa.</div>'
+        rail_link = (
+            f'<a class="detail-link" href="{escape_html(str(article.get("link") or ""))}" target="_blank" rel="noreferrer">Mở bài gốc ↗</a>'
+            if article.get("link")
+            else ""
+        )
+        st.markdown(
+            f"""
+            <div class="detail-rail">
+                <div class="detail-rail__section">
+                    <div class="detail-rail__title">Tổng quan</div>
+                    <div class="detail-rail__chips">{"".join(rail_chips)}</div>
+                    <div class="info-row"><span>Nhãn</span><b>{escape_html(label_name(label))}</b></div>
+                    <div class="info-row"><span>Độ tin cậy</span><b>{escape_html(confidence or "—")}</b></div>
+                    <div class="info-row"><span>Model</span><b>{escape_html(article.get("model_used") or "—")}</b></div>
+                    <div class="info-row"><span>Nguồn</span><b>{escape_html(article.get("source") or "—")}</b></div>
+                </div>
 
-            if article.get("link"):
-                st.link_button("Mở bài gốc ↗", url=article["link"], use_container_width=True, type="primary")
+                <div class="detail-rail__section">
+                    <div class="detail-rail__title">Dấu thời gian</div>
+                    <div class="info-row"><span>Ngày đăng</span><b>{escape_html(pub_date_text)}</b></div>
+                    <div class="info-row"><span>Labeled at</span><b>{escape_html(labeled_at_text)}</b></div>
+                    <div class="info-row"><span>ID</span><b>{escape_html(str(article.get("id") or "—"))}</b></div>
+                    {rail_link}
+                </div>
 
-        with st.container(border=True):
-            st.markdown(section_header("Từ khóa", "Từ khóa được hệ thống trích xuất."), unsafe_allow_html=True)
-            if keywords:
-                st.markdown(keyword_chips(keywords, limit=12), unsafe_allow_html=True)
-            else:
-                st.info("Không có từ khóa.")
-
-        with st.container(border=True):
-            st.markdown(section_header("Trạng thái", "Tín hiệu nhanh để đọc bài."), unsafe_allow_html=True)
-            st.markdown(
-                f"""
-                <div class="info-row"><span>Tin cậy</span><b>{escape_html(confidence or "—")}</b></div>
-                <div class="info-row"><span>Ngôn ngữ</span><b>Tiếng Việt</b></div>
-                <div class="info-row"><span>ID</span><b>{escape_html(article.get("id") or "—")}</b></div>
-                """,
-                unsafe_allow_html=True,
-            )
+                <div class="detail-rail__section">
+                    <div class="detail-rail__title">Từ khóa</div>
+                    {rail_keywords}
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
     st.stop()
 
@@ -286,6 +301,7 @@ st.markdown(
     .news-grid {
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
+        grid-auto-rows: 1fr;
         gap: 1rem;
         align-items: stretch;
     }
@@ -299,6 +315,8 @@ st.markdown(
         border-radius: 18px;
         background: #ffffff;
         box-shadow: 0 10px 26px rgba(15, 23, 42, 0.05);
+        min-width: 0;
+        overflow: hidden;
     }
 
     .news-card__title {
@@ -308,6 +326,11 @@ st.markdown(
         font-weight: 820;
         line-height: 1.35;
         min-height: 2.75em;
+        overflow: hidden;
+        overflow-wrap: anywhere;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
     }
 
     .news-card__preview {
@@ -319,13 +342,16 @@ st.markdown(
         -webkit-line-clamp: 3;
         -webkit-box-orient: vertical;
         overflow: hidden;
+        overflow-wrap: anywhere;
         min-height: 4.74em;
     }
 
     .news-card .keywords {
         min-height: 2.15rem;
+        max-height: 2.15rem;
         margin-top: 0.7rem;
         overflow: hidden;
+        flex-wrap: nowrap;
     }
 
     .news-card .keywords--empty {
@@ -387,26 +413,26 @@ with toolbar_cols[1]:
 st.markdown(section_header("Danh sách bài viết", "Chọn bài để đọc chi tiết."), unsafe_allow_html=True)
 
 def build_card(article: dict) -> str:
-    article_id = escape_html(article.get("id") or "")
+    article_id = quote(str(article.get("id") or ""), safe="")
     title = escape_html(article.get("title", "—"))
     preview = trim_text(article.get("summary") or article.get("snippet") or "", 240)
     preview_html = escape_html(preview or "Không có tóm tắt.")
     keywords_html = (
-        keyword_chips(article["keywords"], limit=6)
+        keyword_chips(article["keywords"], limit=5)
         if article.get("keywords")
         else '<div class="keywords keywords--empty"></div>'
     )
-    return f"""
-    <article class="news-card">
-        {article_meta_html(article, LABEL_COLORS)}
-        <div class="news-card__title">{title}</div>
-        <div class="news-card__preview">{preview_html}</div>
-        {keywords_html}
-        <div class="news-card__footer">
-            <a class="read-link" href="?article_id={article_id}">Đọc →</a>
-        </div>
-    </article>
-    """
+    return (
+        '<div class="news-card">'
+        f'{article_meta_html(article, LABEL_COLORS)}'
+        f'<div class="news-card__title">{title}</div>'
+        f'<div class="news-card__preview">{preview_html}</div>'
+        f'{keywords_html}'
+        '<div class="news-card__footer">'
+        f'<a class="read-link" href="?article_id={escape_html(article_id)}">Mở chi tiết</a>'
+        '</div>'
+        '</div>'
+    )
 
 if not articles:
     st.markdown(

@@ -252,6 +252,7 @@ if recent_articles:
                 st.markdown(keyword_chips(featured["keywords"]), unsafe_allow_html=True)
         with action_col:
             if st.button("Đọc →", key=f"feature_{featured.get('id')}", use_container_width=True, type="primary"):
+                st.session_state["_pending_article_id"] = str(featured.get("id") or "")
                 st.query_params["article_id"] = str(featured["id"])
                 st.switch_page("pages/1_Tin_Tức.py")
 
@@ -260,27 +261,36 @@ if recent_articles:
             section_header("Luồng bài gần đây", "Các bài vừa được đưa vào kho phân loại."),
             unsafe_allow_html=True,
         )
-        feed_cols = st.columns(2)
-        for index, article in enumerate(recent_articles[1:]):
-            article_id = str(article.get("id") or f"recent_{index}")
-            preview = article.get("summary") or article.get("snippet") or ""
-            with feed_cols[index % 2]:
-                with st.container(border=True):
-                    st.markdown(article_meta_html(article, label_colors), unsafe_allow_html=True)
-                    st.markdown(
-                        f'<div class="article-title">{escape_html(article.get("title", "—"))}</div>',
-                        unsafe_allow_html=True,
-                    )
-                    if preview:
+        recent_rows = recent_articles[1:]
+
+        for row_start in range(0, len(recent_rows), 2):
+            row_articles = recent_rows[row_start:row_start + 2]
+            row_cols = st.columns(2)
+            for col, article in zip(row_cols, row_articles):
+                article_id = str(article.get("id") or f"recent_{row_start}")
+                preview = article.get("summary") or article.get("snippet") or ""
+                keywords_html = (
+                    keyword_chips(article["keywords"], limit=5)
+                    if article.get("keywords")
+                    else '<div class="keywords keywords--empty"></div>'
+                )
+                with col:
+                    with st.container(border=True):
                         st.markdown(
-                            f'<div class="article-preview">{escape_html(trim_text(preview, 190))}</div>',
+                            f"""
+                            <div class="recent-card__body">
+                                {article_meta_html(article, label_colors)}
+                                <div class="recent-card__title">{escape_html(article.get("title", "—"))}</div>
+                                <div class="recent-card__preview">{escape_html(trim_text(preview, 190))}</div>
+                                <div class="recent-card__keywords">{keywords_html}</div>
+                            </div>
+                            """,
                             unsafe_allow_html=True,
                         )
-                    if article.get("keywords"):
-                        st.markdown(keyword_chips(article["keywords"], limit=5), unsafe_allow_html=True)
-                    if st.button("Mở chi tiết", key=f"recent_{article_id}", use_container_width=True):
-                        st.query_params["article_id"] = article_id
-                        st.switch_page("pages/1_Tin_Tức.py")
+                        if st.button("Mở chi tiết", key=f"recent_{article_id}", use_container_width=True):
+                            st.session_state["_pending_article_id"] = article_id
+                            st.query_params["article_id"] = article_id
+                            st.switch_page("pages/1_Tin_Tức.py")
 else:
     st.markdown(
         '<div class="empty-state">Chưa có bài viết nào để hiển thị.</div>',
