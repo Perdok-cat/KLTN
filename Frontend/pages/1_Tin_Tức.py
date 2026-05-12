@@ -1,7 +1,4 @@
-"""
-Streamlit - Trang trình duyệt bài viết.
-Dữ liệu lấy từ Backend Flask (BigQuery labeled_articles + summarized_articles).
-"""
+"""Streamlit - Trang trình duyệt bài viết."""
 
 from __future__ import annotations
 
@@ -18,22 +15,22 @@ if str(CURRENT_DIR) not in sys.path:
     sys.path.insert(0, str(CURRENT_DIR))
 
 from ui import (  # noqa: E402
+    ALL_OPTION,
     LABEL_COLORS,
-    LABEL_VI,
     apply_global_styles,
     article_meta_html,
     compact_number,
     confidence_chip,
     escape_html,
+    filter_request_params,
     format_date,
     hero_html,
     keyword_chips,
     label_chip,
-    label_color,
     label_icon,
     label_name,
     neutral_chip,
-    percent_text,
+    render_global_filter_bar,
     render_sidebar,
     section_header,
     trim_text,
@@ -59,9 +56,18 @@ def fetch_labels() -> list[str]:
 
 
 @st.cache_data(ttl=30, show_spinner=False)
-def fetch_articles(page: int, limit: int, label: str, search: str) -> dict:
-    params = {"page": page, "limit": limit}
-    if label and label != "Tất cả":
+def fetch_sources() -> list[str]:
+    resp = requests.get(f"{API_URL}/api/sources", timeout=5)
+    resp.raise_for_status()
+    return resp.json().get("sources", [])
+
+
+@st.cache_data(ttl=30, show_spinner=False)
+def fetch_articles(page: int, limit: int, date_range: str, source: str, label: str, search: str) -> dict:
+    params = {"page": page, "limit": limit, "date_range": date_range}
+    if source and source != ALL_OPTION:
+        params["source"] = source
+    if label and label != ALL_OPTION:
         params["label"] = label
     if search:
         params["search"] = search
@@ -88,10 +94,12 @@ def check_api() -> bool:
 
 api_online = check_api()
 
-label_options = ["Tất cả"]
+label_options: list[str] = []
+source_options: list[str] = []
 if api_online:
     try:
-        label_options += fetch_labels()
+        label_options = fetch_labels()
+        source_options = fetch_sources()
     except Exception:
         pass
 
@@ -99,13 +107,8 @@ render_sidebar("news", API_URL, api_online)
 
 with st.sidebar:
     st.divider()
-    st.markdown('<div class="sidebar-section-title">Bộ lọc</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sidebar-section-title">Hiển thị</div>', unsafe_allow_html=True)
 
-    selected_label = st.selectbox(
-        "Nhãn phân loại",
-        options=label_options,
-        format_func=lambda value: "📂 Tất cả" if value == "Tất cả" else f"{label_icon(value)} {label_name(value)}",
-    )
     search_query = st.text_input("Tìm kiếm", placeholder="Nhập từ khóa...")
     page_size = st.select_slider("Số bài mỗi trang", options=[10, 20, 30, 50], value=20)
 
@@ -123,7 +126,15 @@ if resolved_article:
 else:
     st.session_state["view_article"] = None
 
-filter_key = f"{selected_label}|{search_query}|{page_size}"
+render_global_filter_bar(label_options, source_options)
+filter_params = filter_request_params()
+
+filter_key = (
+    f"{filter_params.get('date_range', 'all')}|"
+    f"{filter_params.get('source', ALL_OPTION)}|"
+    f"{filter_params.get('label', ALL_OPTION)}|"
+    f"{search_query}|{page_size}"
+)
 if st.session_state.get("_filter_key") != filter_key:
     st.session_state["current_page"] = 1
     st.session_state["_filter_key"] = filter_key
@@ -144,8 +155,7 @@ def open_detail(article_id: str) -> None:
 
 if not api_online:
     st.error(
-        f"Không thể kết nối tới Backend tại **{API_URL}**.\n\n"
-        "Chạy Backend trước: `cd Backend && python app.py`"
+        "Không thể tải dữ liệu. Vui lòng kiểm tra dịch vụ dữ liệu và thử lại."
     )
     st.stop()
 
@@ -174,13 +184,12 @@ if st.session_state["view_article"] is not None:
     keywords = article.get("keywords") or ""
     content = article.get("content") or ""
     pub_date_text = format_date(article.get("pub_date")) or "—"
-    labeled_at_text = format_date(article.get("labeled_at")) or "—"
 
     st.markdown(
         hero_html(
             "Bài viết chi tiết",
             str(article.get("title", "—")),
-            "Tóm tắt, metadata và nội dung gốc trong cùng một màn hình đọc.",
+            "Tóm tắt, nguồn tin và nội dung đầy đủ trong cùng một màn hình đọc.",
             [
                 label_chip(label, LABEL_COLORS),
                 confidence_chip(confidence) if confidence else neutral_chip("Tin cậy chưa có", "●", "slate"),
@@ -195,7 +204,7 @@ if st.session_state["view_article"] is not None:
 
     with left_col:
         with st.container(border=True):
-            st.markdown(section_header("Tóm tắt AI", "Điểm chính từ mô hình tóm tắt."), unsafe_allow_html=True)
+            st.markdown(section_header("Tóm tắt", "Những ý chính đáng chú ý."), unsafe_allow_html=True)
             if summary:
                 st.markdown(summary)
             else:
@@ -209,7 +218,7 @@ if st.session_state["view_article"] is not None:
             if keywords:
                 st.markdown(keyword_chips(keywords), unsafe_allow_html=True)
 
-        st.markdown(section_header("Nội dung đầy đủ", "Văn bản đã làm sạch từ backend."), unsafe_allow_html=True)
+        st.markdown(section_header("Nội dung đầy đủ", "Nội dung bài viết được trình bày để đọc nhanh."), unsafe_allow_html=True)
         with st.container(border=True):
             if content:
                 body_html = escape_html(content).replace("\n", "<br>")
@@ -240,14 +249,11 @@ if st.session_state["view_article"] is not None:
             f'<div class="detail-rail__chips">{"".join(rail_chips)}</div>'
             f'<div class="info-row"><span>Nhãn</span><b>{escape_html(label_name(label))}</b></div>'
             f'<div class="info-row"><span>Độ tin cậy</span><b>{escape_html(confidence or "—")}</b></div>'
-            f'<div class="info-row"><span>Model</span><b>{escape_html(article.get("model_used") or "—")}</b></div>'
             f'<div class="info-row"><span>Nguồn</span><b>{escape_html(article.get("source") or "—")}</b></div>'
             '</div>'
             '<div class="detail-rail__section">'
-            '<div class="detail-rail__title">Dấu thời gian</div>'
+            '<div class="detail-rail__title">Thời gian</div>'
             f'<div class="info-row"><span>Ngày đăng</span><b>{escape_html(pub_date_text)}</b></div>'
-            f'<div class="info-row"><span>Labeled at</span><b>{escape_html(labeled_at_text)}</b></div>'
-            f'<div class="info-row"><span>ID</span><b>{escape_html(str(article.get("id") or "—"))}</b></div>'
             f'{rail_link}'
             '</div>'
             '<div class="detail-rail__section">'
@@ -268,11 +274,13 @@ try:
     result = fetch_articles(
         st.session_state["current_page"],
         page_size,
-        selected_label,
+        filter_params.get("date_range", "all"),
+        filter_params.get("source", ALL_OPTION),
+        filter_params.get("label", ALL_OPTION),
         search_query,
     )
 except Exception as exc:
-    st.error(f"Không kết nối được Backend: {exc}")
+    st.error(f"Không tải được dữ liệu: {exc}")
     st.stop()
 
 articles = result.get("articles", []) or []
@@ -283,8 +291,8 @@ total_pages = max(1, -(-total // page_size))
 st.markdown(
     hero_html(
         "Tin tức AI",
-        "Duyệt bài đã gắn nhãn",
-        "Kho bài viết từ BigQuery, có lọc theo nhãn, tìm kiếm theo từ khóa và phân trang rõ ràng.",
+        "Duyệt bài viết",
+        "Tìm và đọc các bài viết AI theo thời gian, nguồn, nhãn và từ khóa.",
         [
             neutral_chip(f"{compact_number(total)} bài", "🧾", "slate"),
             neutral_chip(f"Trang {cur_page}/{total_pages}", "📄", "blue"),
@@ -400,10 +408,12 @@ with toolbar_cols[0]:
         neutral_chip(f"Trang {cur_page}/{total_pages}", "📄", "blue"),
         neutral_chip(f"{page_size}/trang", "▦", "green"),
     ]
-    if selected_label != "Tất cả":
-        chips.append(label_chip(selected_label, LABEL_COLORS))
     if search_query:
         chips.append(neutral_chip(f'Từ khóa: "{search_query}"', "⌕", "amber"))
+    if filter_params.get("source"):
+        chips.append(neutral_chip(filter_params["source"], "🌐", "green"))
+    if filter_params.get("label"):
+        chips.append(label_chip(filter_params["label"], LABEL_COLORS))
     st.markdown(f'<div class="meta-row">{"".join(chips)}</div>', unsafe_allow_html=True)
 
 with toolbar_cols[1]:

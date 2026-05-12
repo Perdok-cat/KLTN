@@ -1,6 +1,6 @@
 """
 Streamlit Frontend - Dashboard chính.
-Hiển thị thống kê tổng quan về bộ dữ liệu tin tức AI.
+Hiển thị góc nhìn tổng quan cho người dùng cuối.
 """
 
 from __future__ import annotations
@@ -18,32 +18,37 @@ if str(CURRENT_DIR) not in sys.path:
     sys.path.insert(0, str(CURRENT_DIR))
 
 from ui import (  # noqa: E402
+    ALL_OPTION,
+    DATE_RANGE_LABELS,
     LABEL_ORDER,
     LABEL_VI,
+    apply_global_styles,
     article_meta_html,
     compact_number,
     escape_html,
+    filter_request_params,
+    format_datetime,
     hero_html,
-    keyword_chips,
-    label_chip,
     label_color,
     label_icon,
     label_name,
     metric_card,
     neutral_chip,
     percent_text,
+    render_global_filter_bar,
     render_sidebar,
     section_header,
+    set_label_filter,
+    set_source_filter,
     trim_text,
-    apply_global_styles,
 )
 
 
 API_URL = os.getenv("API_URL", "http://localhost:5000")
 
 st.set_page_config(
-    page_title="AI News Dashboard",
-    page_icon="🤖",
+    page_title="Dashboard Tin tức AI",
+    page_icon="📰",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -51,17 +56,41 @@ apply_global_styles()
 
 
 @st.cache_data(ttl=60, show_spinner=False)
-def fetch_stats() -> dict:
-    resp = requests.get(f"{API_URL}/api/stats", timeout=10)
+def fetch_stats(date_range: str, source: str, label: str) -> dict:
+    params = {"date_range": date_range}
+    if source and source != ALL_OPTION:
+        params["source"] = source
+    if label and label != ALL_OPTION:
+        params["label"] = label
+    resp = requests.get(f"{API_URL}/api/stats", params=params, timeout=10)
     resp.raise_for_status()
     return resp.json()
 
 
 @st.cache_data(ttl=60, show_spinner=False)
-def fetch_recent(limit: int = 8) -> dict:
-    resp = requests.get(f"{API_URL}/api/articles", params={"limit": limit}, timeout=10)
+def fetch_articles(limit: int, date_range: str, source: str, label: str) -> dict:
+    params = {"limit": limit, "date_range": date_range}
+    if source and source != ALL_OPTION:
+        params["source"] = source
+    if label and label != ALL_OPTION:
+        params["label"] = label
+    resp = requests.get(f"{API_URL}/api/articles", params=params, timeout=10)
     resp.raise_for_status()
     return resp.json()
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def fetch_labels() -> list[str]:
+    resp = requests.get(f"{API_URL}/api/labels", timeout=5)
+    resp.raise_for_status()
+    return resp.json().get("labels", [])
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def fetch_sources() -> list[str]:
+    resp = requests.get(f"{API_URL}/api/sources", timeout=5)
+    resp.raise_for_status()
+    return resp.json().get("sources", [])
 
 
 @st.cache_data(ttl=20, show_spinner=False)
@@ -73,27 +102,78 @@ def check_api() -> bool:
         return False
 
 
+def delta_text(delta: dict | None, suffix: str = "") -> tuple[str, str]:
+    value = None if not delta else delta.get("value")
+    percent = None if not delta else delta.get("percent")
+    if value is None:
+        return "Chưa có kỳ trước", "neutral"
+
+    value_i = int(value or 0)
+    if value_i == 0:
+        return "Không đổi so với kỳ trước", "neutral"
+
+    direction = "Tăng" if value_i > 0 else "Giảm"
+    tone = "up" if value_i > 0 else "down"
+    abs_value = compact_number(abs(value_i))
+    if percent is None:
+        return f"{direction} {abs_value}{suffix}", tone
+    return f"{direction} {abs_value}{suffix} ({abs(float(percent)):.1f}%)", tone
+
+
+def label_delta(data: dict, label: str) -> tuple[str, str]:
+    if not data.get("previous_period_available") or not label:
+        return "Chưa có kỳ trước", "neutral"
+    current = int((data.get("label_distribution") or {}).get(label, 0) or 0)
+    previous = int((data.get("previous_label_distribution") or {}).get(label, 0) or 0)
+    diff = current - previous
+    if diff == 0:
+        return "Không đổi so với kỳ trước", "neutral"
+    direction = "Tăng" if diff > 0 else "Giảm"
+    tone = "up" if diff > 0 else "down"
+    return f"{direction} {compact_number(abs(diff))} bài", tone
+
+
 api_online = check_api()
 render_sidebar("dashboard", API_URL, api_online)
 
 if not api_online:
-    st.error(
-        f"Không thể kết nối tới Backend tại **{API_URL}**.\n\n"
-        "Chạy Backend trước: `cd Backend && python app.py`"
-    )
+    st.error("Không thể tải dữ liệu. Vui lòng kiểm tra dịch vụ dữ liệu và thử lại.")
     st.stop()
 
 try:
-    data = fetch_stats()
-    recent_result = fetch_recent(limit=7)
+    labels = fetch_labels()
+    sources = fetch_sources()
+except Exception:
+    labels = []
+    sources = []
+
+render_global_filter_bar(labels, sources)
+params = filter_request_params()
+
+try:
+    data = fetch_stats(
+        params.get("date_range", "all"),
+        params.get("source", ALL_OPTION),
+        params.get("label", ALL_OPTION),
+    )
+    recent_result = fetch_articles(
+        8,
+        params.get("date_range", "all"),
+        params.get("source", ALL_OPTION),
+        params.get("label", ALL_OPTION),
+    )
 except Exception as exc:
-    st.error(f"Lỗi khi tải dữ liệu: {exc}")
+    st.error(f"Không tải được dữ liệu: {exc}")
     st.stop()
 
 label_dist = data.get("label_distribution", {}) or {}
 label_colors = data.get("label_colors", {}) or {}
 total = int(data.get("total", 0) or 0)
+source_count = int(data.get("source_count", 0) or 0)
+recent_count = int(data.get("recent_count", 0) or 0)
 recent_articles = recent_result.get("articles", []) or []
+last_updated = format_datetime(data.get("last_updated")) or "Chưa có dữ liệu"
+date_label = DATE_RANGE_LABELS.get(params.get("date_range", "all"), "Tất cả thời gian")
 
 sorted_labels = sorted(
     ((label, int(count or 0)) for label, count in label_dist.items()),
@@ -113,48 +193,75 @@ top_label, top_count = (sorted_labels[0] if sorted_labels else ("", 0))
 top_share = percent_text(top_count, total)
 
 hero_chips = [
-    neutral_chip("Backend live", "●", "green"),
-    neutral_chip("BigQuery", "▦", "blue"),
-    neutral_chip(f"{compact_number(total)} bài đã gắn nhãn", "📰", "slate"),
+    neutral_chip(f"{compact_number(total)} bài viết", "📰", "slate"),
+    neutral_chip(date_label, "📅", "blue"),
 ]
+if params.get("source"):
+    hero_chips.append(neutral_chip(params["source"], "🌐", "green"))
+if params.get("label"):
+    hero_chips.append(neutral_chip(label_name(params["label"]), label_icon(params["label"]), "amber"))
+
 st.markdown(
     hero_html(
-        "AI News Pipeline",
-        "Bảng điều khiển tin tức AI",
-        "Theo dõi phân bố nhãn, bài mới và tín hiệu nổi bật trong kho tin tức AI đã gắn nhãn.",
+        "Dashboard Tin tức AI",
+        "Theo dõi tin AI mới nhất",
+        "Nắm nhanh xu hướng nhãn, nguồn tin và các bài đáng chú ý theo bộ lọc đang chọn.",
         hero_chips,
+        meta=f"Cập nhật lần cuối: {last_updated}",
     ),
     unsafe_allow_html=True,
 )
+
+cta_cols = st.columns([1, 4])
+with cta_cols[0]:
+    if st.button("Xem bài mới", use_container_width=True, type="primary"):
+        st.switch_page("pages/1_Tin_Tức.py")
+
+total_delta, total_tone = delta_text((data.get("deltas") or {}).get("total"), " bài")
+source_delta, source_tone = delta_text((data.get("deltas") or {}).get("source_count"), " nguồn")
+recent_delta, recent_tone = delta_text((data.get("deltas") or {}).get("recent_count"), " bài")
+top_delta, top_tone = label_delta(data, top_label)
 
 metric_specs = [
     (
         "Tổng bài viết",
         compact_number(total),
-        "Dữ liệu từ labeled_articles",
+        "Số bài phù hợp với bộ lọc hiện tại.",
         "#2563eb",
         "📰",
+        total_delta,
+        "Đếm tất cả bài viết sau khi áp dụng thời gian, nguồn và nhãn.",
+        total_tone,
     ),
     (
-        "Nhãn chủ đạo",
+        "Nhãn nổi bật",
         label_name(top_label),
         f"{compact_number(top_count)} bài · {top_share}",
         label_color(top_label, label_colors),
         label_icon(top_label),
+        top_delta,
+        "Nhãn có số bài nhiều nhất trong tập dữ liệu đang lọc.",
+        top_tone,
     ),
     (
-        "Bài mới hiển thị",
-        compact_number(len(recent_articles)),
-        "Dòng bài gần nhất theo labeled_at",
+        "Nguồn đang theo dõi",
+        compact_number(source_count),
+        "Số nguồn có bài viết trong bộ lọc hiện tại.",
         "#0f766e",
-        "⚡",
+        "🌐",
+        source_delta,
+        "Đếm số nguồn khác nhau có ít nhất một bài phù hợp.",
+        source_tone,
     ),
     (
-        "Nguồn ghép nối",
-        "2 bảng",
-        "labeled_articles + summarized_articles",
-        "#475569",
-        "▦",
+        "Bài mới trong kỳ",
+        compact_number(recent_count),
+        f"Số bài trong mốc {date_label.lower()}.",
+        "#d97706",
+        "⚡",
+        recent_delta,
+        "Đếm bài theo ngày đăng trong khoảng thời gian đang chọn.",
+        recent_tone,
     ),
 ]
 
@@ -163,10 +270,17 @@ for col, spec in zip(metric_cols, metric_specs):
     with col:
         st.markdown(metric_card(*spec), unsafe_allow_html=True)
 
+if top_label:
+    filter_cols = st.columns([1, 5])
+    with filter_cols[0]:
+        if st.button(f"Lọc {label_name(top_label)}", use_container_width=True):
+            set_label_filter(top_label)
+            st.rerun()
+
 st.markdown(
     section_header(
         "Phân bố nhãn",
-        "Tỷ trọng nhãn giúp nhìn nhanh bộ dữ liệu đang thiên về tín hiệu, ứng dụng, phân tích sâu hay nhiễu.",
+        "Tỷ trọng nhãn thay đổi theo thời gian, nguồn và nhãn đang chọn.",
     ),
     unsafe_allow_html=True,
 )
@@ -224,78 +338,54 @@ with chart_right:
     )
     st.plotly_chart(fig_bar, use_container_width=True, config={"displayModeBar": False})
 
+if sorted_labels:
+    st.markdown("**Lọc nhanh theo nhãn**")
+    quick_cols = st.columns(min(4, len(sorted_labels)))
+    for idx, (label, _) in enumerate(sorted_labels[:4]):
+        with quick_cols[idx % len(quick_cols)]:
+            if st.button(f"{label_icon(label)} {label_name(label)}", key=f"label_filter_{label}", use_container_width=True):
+                set_label_filter(label)
+                st.rerun()
+
 st.markdown(
     section_header(
-        "Bài mới nổi bật",
-        "Mở nhanh bài mới nhất hoặc chuyển sang trang Tin tức để lọc sâu hơn.",
+        "Bài mới và nổi bật",
+        "Danh sách bài viết mới nhất theo bộ lọc hiện tại.",
     ),
     unsafe_allow_html=True,
 )
 
 if recent_articles:
-    featured = recent_articles[0]
-    featured_preview = featured.get("summary") or featured.get("snippet") or ""
-    with st.container(border=True):
-        content_col, action_col = st.columns([5.4, 1])
-        with content_col:
-            st.markdown(article_meta_html(featured, label_colors), unsafe_allow_html=True)
+    st.markdown('<div class="article-list">', unsafe_allow_html=True)
+    for idx, article in enumerate(recent_articles):
+        article_id = str(article.get("id") or f"article_{idx}")
+        preview = trim_text(article.get("summary") or article.get("snippet") or "", 220)
+        source = str(article.get("source") or "").strip()
+        row_cols = st.columns([5.5, 1.25])
+        with row_cols[0]:
             st.markdown(
-                f'<div class="feature-title">{escape_html(featured.get("title", "—"))}</div>',
+                f"""
+                <div class="article-row">
+                    <div>
+                        {article_meta_html(article, label_colors)}
+                        <div class="article-row__title">{escape_html(article.get("title", "—"))}</div>
+                        <div class="article-row__preview">{escape_html(preview or "Không có tóm tắt.")}</div>
+                    </div>
+                </div>
+                """,
                 unsafe_allow_html=True,
             )
-            if featured_preview:
-                st.markdown(
-                    f'<div class="article-preview">{escape_html(trim_text(featured_preview, 420))}</div>',
-                    unsafe_allow_html=True,
-                )
-            if featured.get("keywords"):
-                st.markdown(keyword_chips(featured["keywords"]), unsafe_allow_html=True)
-        with action_col:
-            if st.button("Đọc →", key=f"feature_{featured.get('id')}", use_container_width=True, type="primary"):
-                st.session_state["_pending_article_id"] = str(featured.get("id") or "")
-                st.query_params["article_id"] = str(featured["id"])
+        with row_cols[1]:
+            if st.button("Mở", key=f"open_{article_id}", use_container_width=True, type="primary"):
+                st.session_state["_pending_article_id"] = article_id
+                st.query_params["article_id"] = article_id
                 st.switch_page("pages/1_Tin_Tức.py")
-
-    if len(recent_articles) > 1:
-        st.markdown(
-            section_header("Luồng bài gần đây", "Các bài vừa được đưa vào kho phân loại."),
-            unsafe_allow_html=True,
-        )
-        recent_rows = recent_articles[1:]
-
-        for row_start in range(0, len(recent_rows), 2):
-            row_articles = recent_rows[row_start:row_start + 2]
-            row_cols = st.columns(2)
-            for col, article in zip(row_cols, row_articles):
-                article_id = str(article.get("id") or f"recent_{row_start}")
-                preview = article.get("summary") or article.get("snippet") or ""
-                keywords_html = (
-                    keyword_chips(article["keywords"], limit=5)
-                    if article.get("keywords")
-                    else '<div class="keywords keywords--empty"></div>'
-                )
-                with col:
-                    with st.container(border=True):
-                        st.markdown(
-                            f"""
-                            <div class="recent-card__body">
-                                {article_meta_html(article, label_colors)}
-                                <div class="recent-card__title">{escape_html(article.get("title", "—"))}</div>
-                                <div class="recent-card__preview">{escape_html(trim_text(preview, 190))}</div>
-                                <div class="recent-card__keywords">{keywords_html}</div>
-                            </div>
-                            """,
-                            unsafe_allow_html=True,
-                        )
-                        if st.button("Mở chi tiết", key=f"recent_{article_id}", use_container_width=True):
-                            st.session_state["_pending_article_id"] = article_id
-                            st.query_params["article_id"] = article_id
-                            st.switch_page("pages/1_Tin_Tức.py")
+            if source and st.button("Nguồn này", key=f"source_{article_id}", use_container_width=True):
+                set_source_filter(source)
+                st.rerun()
+    st.markdown("</div>", unsafe_allow_html=True)
 else:
     st.markdown(
-        '<div class="empty-state">Chưa có bài viết nào để hiển thị.</div>',
+        '<div class="empty-state">Chưa có bài viết phù hợp với bộ lọc hiện tại.</div>',
         unsafe_allow_html=True,
     )
-
-st.divider()
-st.caption("AI News Pipeline · KLTN 2026")

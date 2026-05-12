@@ -140,10 +140,60 @@ def _escape(value: str) -> str:
     return str(value or "").replace("'", "\\'")
 
 
-def _build_where(label_filter: str, search: str, alias: str = "l") -> str:
+DATE_RANGE_DAYS = {
+    "7d": 7,
+    "30d": 30,
+    "90d": 90,
+}
+
+
+def _normalize_filter(value: str) -> str:
+    raw = str(value or "").strip()
+    return "" if raw in {"", "Tất cả", "all"} else raw
+
+
+def _date_clause(date_range: str, alias: str = "l", previous: bool = False) -> str:
+    days = DATE_RANGE_DAYS.get(str(date_range or "").strip())
+    if not days:
+        return ""
+
+    raw_field = f"CAST({alias}.pub_date AS STRING)"
+    field = (
+        "DATE(COALESCE("
+        f"SAFE_CAST({alias}.pub_date AS TIMESTAMP), "
+        f"SAFE.PARSE_TIMESTAMP('%a, %d %b %Y %H:%M:%S %z', {raw_field}), "
+        f"SAFE.PARSE_TIMESTAMP('%a, %d %B %Y %H:%M:%S %z', {raw_field}), "
+        f"SAFE.PARSE_TIMESTAMP('%a, %d %b %Y', {raw_field}), "
+        f"SAFE.PARSE_TIMESTAMP('%Y-%m-%d', {raw_field})"
+        "))"
+    )
+    if previous:
+        return (
+            f"{field} >= DATE_SUB(CURRENT_DATE(), INTERVAL {days * 2} DAY) "
+            f"AND {field} < DATE_SUB(CURRENT_DATE(), INTERVAL {days} DAY)"
+        )
+    return f"{field} >= DATE_SUB(CURRENT_DATE(), INTERVAL {days} DAY)"
+
+
+def _build_where(
+    label_filter: str,
+    search: str = "",
+    alias: str = "l",
+    source_filter: str = "",
+    date_range: str = "",
+    previous: bool = False,
+) -> str:
     clauses: list[str] = []
+    label_filter = _normalize_filter(label_filter)
+    source_filter = _normalize_filter(source_filter)
+
     if label_filter:
         clauses.append(f"{alias}.label = '{_escape(label_filter)}'")
+    if source_filter:
+        clauses.append(f"{alias}.source = '{_escape(source_filter)}'")
+    date_condition = _date_clause(date_range, alias, previous)
+    if date_condition:
+        clauses.append(date_condition)
     if search:
         s = _escape(search).lower()
         clauses.append(
@@ -151,6 +201,28 @@ def _build_where(label_filter: str, search: str, alias: str = "l") -> str:
             f"OR LOWER({alias}.content) LIKE '%{s}%')"
         )
     return ("WHERE " + " AND ".join(clauses)) if clauses else ""
+
+
+def _stats_cache_key() -> str:
+    return "|".join(
+        [
+            "stats",
+            request.args.get("date_range", "all").strip(),
+            request.args.get("source", "").strip(),
+            request.args.get("label", "").strip(),
+        ]
+    )
+
+
+def _count_delta(current: int, previous: int | None) -> dict:
+    if previous is None:
+        return {"value": None, "percent": None}
+    diff = int(current or 0) - int(previous or 0)
+    if previous <= 0:
+        percent = None if diff else 0.0
+    else:
+        percent = diff / previous * 100
+    return {"value": diff, "percent": percent}
 
 
 
@@ -170,30 +242,84 @@ def health():
 
 @app.get("/api/stats")
 def stats():
-    """Thống kê phân bố nhãn (có cache)."""
-    cached = cache_get("stats")
+    """Thống kê phân bố nhãn, KPI và độ mới dữ liệu."""
+    cache_key = _stats_cache_key()
+    cached = cache_get(cache_key)
     if cached:
         return jsonify(cached)
+
+    label_filter = request.args.get("label", "").strip()
+    source_filter = request.args.get("source", "").strip()
+    date_range = request.args.get("date_range", "all").strip()
+    where = _build_where(label_filter, alias="l", source_filter=source_filter, date_range=date_range)
+    previous_where = _build_where(
+        label_filter,
+        alias="l",
+        source_filter=source_filter,
+        date_range=date_range,
+        previous=True,
+    )
+    has_previous_period = date_range in DATE_RANGE_DAYS
 
     try:
         rows = run_query(f"""
             SELECT label, COUNT(*) AS cnt
-            FROM   {tbl(BQ_LABELED)}
-            WHERE  label IS NOT NULL
+            FROM   {tbl(BQ_LABELED)} l
+            {where}
+            {"AND" if where else "WHERE"} l.label IS NOT NULL
             GROUP  BY label
             ORDER  BY cnt DESC
         """)
+        summary_rows = run_query(f"""
+            SELECT
+                COUNT(*) AS total,
+                COUNT(DISTINCT source) AS source_count,
+                MAX(CAST(labeled_at AS STRING)) AS last_updated
+            FROM {tbl(BQ_LABELED)} l
+            {where}
+        """)
+        previous_rows = run_query(f"""
+            SELECT
+                COUNT(*) AS total,
+                COUNT(DISTINCT source) AS source_count
+            FROM {tbl(BQ_LABELED)} l
+            {previous_where}
+        """) if has_previous_period else []
+        previous_label_rows = run_query(f"""
+            SELECT label, COUNT(*) AS cnt
+            FROM   {tbl(BQ_LABELED)} l
+            {previous_where}
+            {"AND" if previous_where else "WHERE"} l.label IS NOT NULL
+            GROUP  BY label
+        """) if has_previous_period else []
     except GoogleAPICallError as exc:
         return jsonify({"error": str(exc)}), 503
 
     label_counts = {r.label: r.cnt for r in rows}
+    previous_label_counts = {r.label: r.cnt for r in previous_label_rows}
+    summary = summary_rows[0] if summary_rows else None
+    previous = previous_rows[0] if previous_rows else None
+    total = int(summary.total or 0) if summary else 0
+    source_count = int(summary.source_count or 0) if summary else 0
+    previous_total = int(previous.total or 0) if previous else None
+    previous_source_count = int(previous.source_count or 0) if previous else None
     result = {
-        "total":              sum(label_counts.values()),
+        "total": total,
+        "source_count": source_count,
+        "recent_count": total,
+        "last_updated": summary.last_updated if summary else "",
         "label_distribution": label_counts,
-        "label_colors":       LABEL_COLORS,
-        "label_icons":        LABEL_ICONS,
+        "previous_label_distribution": previous_label_counts,
+        "label_colors": LABEL_COLORS,
+        "label_icons": LABEL_ICONS,
+        "deltas": {
+            "total": _count_delta(total, previous_total),
+            "source_count": _count_delta(source_count, previous_source_count),
+            "recent_count": _count_delta(total, previous_total),
+        },
+        "previous_period_available": has_previous_period,
     }
-    cache_set("stats", result)
+    cache_set(cache_key, result)
     return jsonify(result)
 
 
@@ -219,6 +345,28 @@ def labels():
     return jsonify(result)
 
 
+@app.get("/api/sources")
+def sources():
+    """Danh sách nguồn tin có trong kho dữ liệu."""
+    cached = cache_get("sources")
+    if cached:
+        return jsonify(cached)
+
+    try:
+        rows = run_query(f"""
+            SELECT DISTINCT source
+            FROM   {tbl(BQ_LABELED)}
+            WHERE  source IS NOT NULL AND source != ''
+            ORDER  BY source
+        """)
+    except GoogleAPICallError as exc:
+        return jsonify({"error": str(exc)}), 503
+
+    result = {"sources": [r.source for r in rows]}
+    cache_set("sources", result)
+    return jsonify(result)
+
+
 @app.get("/api/articles")
 def articles():
     """
@@ -227,15 +375,24 @@ def articles():
         page   (int)  – trang hiện tại, mặc định 1
         limit  (int)  – số bài mỗi trang, tối đa 100, mặc định 20
         label  (str)  – lọc theo nhãn
+        source (str)  – lọc theo nguồn
+        date_range (str) – all, 7d, 30d hoặc 90d theo pub_date
         search (str)  – tìm trong tiêu đề + nội dung
     """
     page         = request.args.get("page",   1,  type=int)
     limit        = min(request.args.get("limit", 20, type=int), 100)
     label_filter = request.args.get("label",  "").strip()
+    source_filter = request.args.get("source", "").strip()
+    date_range   = request.args.get("date_range", "all").strip()
     search       = request.args.get("search", "").strip()
     offset       = (page - 1) * limit
 
-    where = _build_where(label_filter, search)
+    where = _build_where(
+        label_filter,
+        search,
+        source_filter=source_filter,
+        date_range=date_range,
+    )
 
     try:
         count_rows = run_query(f"""

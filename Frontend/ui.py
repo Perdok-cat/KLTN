@@ -10,6 +10,15 @@ from typing import Iterable, Mapping
 import streamlit as st
 
 
+ALL_OPTION = "Tất cả"
+DATE_RANGE_OPTIONS = ["all", "7d", "30d", "90d"]
+DATE_RANGE_LABELS = {
+    "all": "Tất cả thời gian",
+    "7d": "7 ngày qua",
+    "30d": "30 ngày qua",
+    "90d": "90 ngày qua",
+}
+
 LABEL_ORDER = ["MARKET SIGNALS", "SOLUTIONS & USE CASES", "DEEP DIVE", "NOISE"]
 
 LABEL_VI = {
@@ -42,6 +51,7 @@ CONFIDENCE_META = {
 DATE_FORMATS = (
     "%Y-%m-%dT%H:%M:%S.%f%z",
     "%Y-%m-%dT%H:%M:%S%z",
+    "%Y-%m-%d %H:%M:%S.%f",
     "%Y-%m-%d %H:%M:%S%z",
     "%Y-%m-%d %H:%M:%S",
     "%Y-%m-%d",
@@ -254,26 +264,32 @@ def apply_global_styles() -> None:
 
         .hero-band {
             width: 100%;
-            padding: 1.55rem 1.7rem;
+            min-height: 220px;
+            max-height: 260px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            padding: 1.25rem 1.55rem;
             margin: 0 0 1.35rem;
             border: 1px solid #1f2a44;
-            border-radius: 22px;
+            border-radius: 18px;
             background: #101827;
             color: #ffffff;
+            overflow: hidden;
         }
 
         .hero-band h1 {
             color: #ffffff;
-            font-size: clamp(2rem, 3vw, 3rem);
-            margin: 0.1rem 0 0.55rem;
+            font-size: clamp(1.75rem, 2.35vw, 2.35rem);
+            margin: 0.08rem 0 0.48rem;
         }
 
         .hero-band p {
             color: #cbd5e1;
             max-width: 860px;
             margin: 0;
-            font-size: 1.02rem;
-            line-height: 1.58;
+            font-size: 0.98rem;
+            line-height: 1.48;
         }
 
         .page-kicker {
@@ -284,11 +300,40 @@ def apply_global_styles() -> None:
             letter-spacing: 0.08em;
         }
 
+        .hero-meta {
+            margin-top: 0.72rem;
+            color: #dbeafe;
+            font-size: 0.84rem;
+            font-weight: 720;
+        }
+
         .hero-chips {
             display: flex;
             flex-wrap: wrap;
             gap: 0.5rem;
-            margin-top: 1.05rem;
+            margin-top: 0.86rem;
+        }
+
+        .filter-panel {
+            padding: 1rem 1.08rem 1.1rem;
+            margin: 0 0 1.1rem;
+            border: 1px solid var(--ai-line-soft);
+            border-radius: var(--ai-radius);
+            background: #ffffff;
+            box-shadow: 0 10px 24px rgba(15, 23, 42, 0.055);
+        }
+
+        .filter-panel__title {
+            margin-bottom: 0.72rem;
+            color: #0f172a;
+            font-size: 0.95rem;
+            font-weight: 820;
+        }
+
+        .filter-panel .stSelectbox label {
+            color: #475569;
+            font-size: 0.78rem;
+            font-weight: 760;
         }
 
         .section-head {
@@ -308,7 +353,7 @@ def apply_global_styles() -> None:
 
         .metric-card {
             position: relative;
-            min-height: 132px;
+            min-height: 152px;
             overflow: hidden;
             padding: 1.08rem 1.12rem 1rem;
             border: 1px solid var(--ai-line-soft);
@@ -358,6 +403,18 @@ def apply_global_styles() -> None:
             color: #64748b;
             font-size: 0.82rem;
             line-height: 1.42;
+        }
+
+        .metric-card__delta {
+            display: inline-flex;
+            align-items: center;
+            margin-top: 0.62rem;
+            padding: 0.28rem 0.48rem;
+            border-radius: 999px;
+            background: var(--delta-bg);
+            color: var(--delta-color);
+            font-size: 0.76rem;
+            font-weight: 780;
         }
 
         .ai-chip,
@@ -458,6 +515,44 @@ def apply_global_styles() -> None:
         .recent-card__keywords .keywords {
             margin-top: 0;
             flex-wrap: nowrap;
+        }
+
+        .article-list {
+            display: grid;
+            gap: 0.75rem;
+        }
+
+        .article-row {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            gap: 1rem;
+            align-items: center;
+            padding: 0.95rem 1rem;
+            border: 1px solid rgba(148, 163, 184, 0.28);
+            border-radius: 14px;
+            background: #ffffff;
+            box-shadow: 0 8px 20px rgba(15, 23, 42, 0.045);
+        }
+
+        .article-row__title {
+            margin-top: 0.54rem;
+            color: #0f172a;
+            font-size: 1.01rem;
+            font-weight: 820;
+            line-height: 1.35;
+            overflow-wrap: anywhere;
+        }
+
+        .article-row__preview {
+            margin-top: 0.36rem;
+            color: #475569;
+            font-size: 0.89rem;
+            line-height: 1.5;
+            overflow-wrap: anywhere;
+        }
+
+        .article-row__action {
+            min-width: 116px;
         }
 
         .feature-title {
@@ -587,11 +682,21 @@ def apply_global_styles() -> None:
             }
 
             .hero-band {
+                min-height: auto;
+                max-height: none;
                 padding: 1.2rem;
             }
 
             .hero-band h1 {
                 font-size: 2rem;
+            }
+
+            .article-row {
+                grid-template-columns: 1fr;
+            }
+
+            .article-row__action {
+                min-width: 0;
             }
         }
         </style>
@@ -600,20 +705,7 @@ def apply_global_styles() -> None:
     )
 
 
-def render_sidebar(active_page: str, api_url: str, api_online: bool | None = None) -> None:
-    if api_online is True:
-        status_text = "Backend online"
-        status_color = "#16a34a"
-        status_soft = "rgba(22, 163, 74, 0.16)"
-    elif api_online is False:
-        status_text = "Backend offline"
-        status_color = "#dc2626"
-        status_soft = "rgba(220, 38, 38, 0.14)"
-    else:
-        status_text = "Backend chưa kiểm tra"
-        status_color = "#64748b"
-        status_soft = "rgba(100, 116, 139, 0.15)"
-
+def render_sidebar(active_page: str, api_url: str = "", api_online: bool | None = None) -> None:
     active_label = "Dashboard" if active_page == "dashboard" else "Tin tức"
 
     with st.sidebar:
@@ -622,8 +714,8 @@ def render_sidebar(active_page: str, api_url: str, api_online: bool | None = Non
             <div class="sidebar-brand">
                 <div class="sidebar-brand__mark">AI</div>
                 <div>
-                    <div class="sidebar-brand__title">AI News Pipeline</div>
-                    <div class="sidebar-brand__caption">Phân loại, tóm tắt và theo dõi tin AI</div>
+                    <div class="sidebar-brand__title">Tin tức AI</div>
+                    <div class="sidebar-brand__caption">Theo dõi chủ đề và bài viết mới</div>
                 </div>
             </div>
             <div class="ai-chip" style="--chip-bg:#ffffff;--chip-color:#334155;--chip-border:#d8e2ee;">
@@ -635,18 +727,6 @@ def render_sidebar(active_page: str, api_url: str, api_online: bool | None = Non
         st.divider()
         st.page_link("app.py", label="Dashboard", icon="📊")
         st.page_link("pages/1_Tin_Tức.py", label="Tin tức", icon="📰")
-        st.markdown(
-            f"""
-            <div class="sidebar-status" style="--status-color:{status_color};--status-soft:{status_soft};">
-                <span class="sidebar-status__dot"></span>
-                <span>{escape_html(status_text)}</span>
-            </div>
-            <div style="margin-top:.55rem;color:#64748b;font-size:.73rem;line-height:1.35;">
-                API: {escape_html(api_url)}
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
 
 
 def escape_html(value: object) -> str:
@@ -700,6 +780,98 @@ def format_date(value: object) -> str:
             continue
 
     return raw[:32]
+
+
+def format_datetime(value: object) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+
+    normalized = raw.replace("Z", "+00:00")
+    for fmt in DATE_FORMATS:
+        try:
+            parsed = datetime.strptime(normalized, fmt)
+            return parsed.strftime("%d/%m/%Y %H:%M")
+        except ValueError:
+            continue
+
+    return raw[:32]
+
+
+def normalize_option(value: object) -> str:
+    raw = str(value or "").strip()
+    return "" if raw in {"", ALL_OPTION, "all"} else raw
+
+
+def init_global_filters() -> None:
+    st.session_state.setdefault("global_date_range", "all")
+    st.session_state.setdefault("global_source", ALL_OPTION)
+    st.session_state.setdefault("global_label", ALL_OPTION)
+    pending_label = st.session_state.pop("_pending_global_label", None)
+    pending_source = st.session_state.pop("_pending_global_source", None)
+    if pending_label is not None:
+        st.session_state["global_label"] = pending_label or ALL_OPTION
+    if pending_source is not None:
+        st.session_state["global_source"] = pending_source or ALL_OPTION
+
+
+def filter_request_params() -> dict[str, str]:
+    init_global_filters()
+    params: dict[str, str] = {"date_range": str(st.session_state["global_date_range"])}
+    source = normalize_option(st.session_state["global_source"])
+    label = normalize_option(st.session_state["global_label"])
+    if source:
+        params["source"] = source
+    if label:
+        params["label"] = label
+    return params
+
+
+def render_global_filter_bar(labels: list[str], sources: list[str]) -> None:
+    init_global_filters()
+
+    label_options = [ALL_OPTION] + [label for label in labels if label]
+    source_options = [ALL_OPTION] + [source for source in sources if source]
+
+    if st.session_state["global_label"] not in label_options:
+        st.session_state["global_label"] = ALL_OPTION
+    if st.session_state["global_source"] not in source_options:
+        st.session_state["global_source"] = ALL_OPTION
+    if st.session_state["global_date_range"] not in DATE_RANGE_OPTIONS:
+        st.session_state["global_date_range"] = "all"
+
+    st.markdown('<div class="filter-panel"><div class="filter-panel__title">Bộ lọc chung</div>', unsafe_allow_html=True)
+    cols = st.columns([1, 1, 1])
+    with cols[0]:
+        st.selectbox(
+            "Thời gian",
+            options=DATE_RANGE_OPTIONS,
+            key="global_date_range",
+            format_func=lambda value: DATE_RANGE_LABELS.get(value, value),
+        )
+    with cols[1]:
+        st.selectbox(
+            "Nguồn",
+            options=source_options,
+            key="global_source",
+            format_func=lambda value: "Tất cả nguồn" if value == ALL_OPTION else value,
+        )
+    with cols[2]:
+        st.selectbox(
+            "Nhãn",
+            options=label_options,
+            key="global_label",
+            format_func=lambda value: "Tất cả nhãn" if value == ALL_OPTION else f"{label_icon(value)} {label_name(value)}",
+        )
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+def set_label_filter(label: str) -> None:
+    st.session_state["_pending_global_label"] = label or ALL_OPTION
+
+
+def set_source_filter(source: str) -> None:
+    st.session_state["_pending_global_source"] = source or ALL_OPTION
 
 
 def label_name(label: str) -> str:
@@ -785,16 +957,38 @@ def article_meta_html(article: Mapping[str, object], colors: Mapping[str, str] |
     return f'<div class="meta-row">{"".join(chips)}</div>'
 
 
-def metric_card(title: str, value: str, detail: str, color: str, icon: str) -> str:
+def metric_card(
+    title: str,
+    value: str,
+    detail: str,
+    color: str,
+    icon: str,
+    delta: str = "",
+    tooltip: str = "",
+    delta_tone: str = "neutral",
+) -> str:
     safe_color = css_color(color, "#2563eb")
+    delta_colors = {
+        "up": ("#ecfdf5", "#047857"),
+        "down": ("#fef2f2", "#b91c1c"),
+        "neutral": ("#f8fafc", "#475569"),
+    }
+    delta_bg, delta_color = delta_colors.get(delta_tone, delta_colors["neutral"])
+    delta_html = (
+        f'<div class="metric-card__delta" style="--delta-bg:{delta_bg};--delta-color:{delta_color};">{escape_html(delta)}</div>'
+        if delta
+        else ""
+    )
+    tooltip_attr = f' title="{escape_html(tooltip)}"' if tooltip else ""
     return f"""
-    <div class="metric-card" style="--accent:{safe_color};--accent-soft:{safe_color}18;">
+    <div class="metric-card" style="--accent:{safe_color};--accent-soft:{safe_color}18;"{tooltip_attr}>
         <div class="metric-card__top">
             <span class="metric-card__icon">{escape_html(icon)}</span>
             <span>{escape_html(title)}</span>
         </div>
         <div class="metric-card__value">{escape_html(value)}</div>
         <div class="metric-card__detail">{escape_html(detail)}</div>
+        {delta_html}
     </div>
     """
 
@@ -809,14 +1003,16 @@ def section_header(title: str, subtitle: str = "") -> str:
     """
 
 
-def hero_html(kicker: str, title: str, subtitle: str, chips: Iterable[str] = ()) -> str:
+def hero_html(kicker: str, title: str, subtitle: str, chips: Iterable[str] = (), meta: str = "") -> str:
     chip_html = "".join(chips)
     chip_block = f'<div class="hero-chips">{chip_html}</div>' if chip_html else ""
+    meta_block = f'<div class="hero-meta">{escape_html(meta)}</div>' if meta else ""
     return f"""
     <div class="hero-band">
         <div class="page-kicker">{escape_html(kicker)}</div>
         <h1>{escape_html(title)}</h1>
         <p>{escape_html(subtitle)}</p>
+        {meta_block}
         {chip_block}
     </div>
     """
