@@ -514,6 +514,25 @@ def _get_endpoint():
     return aiplatform.Endpoint(VERTEX_ENDPOINT_ID)
 
 
+def _model_resource_key(resource_name: str | None) -> str:
+    return (resource_name or "").split("@", 1)[0].strip()
+
+
+def _serialize_training_row(r) -> dict:
+    return {
+        "job_id":                r.job_id,
+        "status":                r.status,
+        "triggered_at":          r.triggered_at.isoformat() if r.triggered_at else None,
+        "completed_at":          r.completed_at.isoformat()  if r.completed_at  else None,
+        "accuracy":              float(r.accuracy)            if r.accuracy is not None else None,
+        "best_model":            r.best_model,
+        "rows_original":         r.rows_original,
+        "rows_hitl":             r.rows_hitl,
+        "model_resource_name":   r.model_resource_name,
+        "endpoint_resource_name":r.endpoint_resource_name,
+    }
+
+
 @app.get("/api/model/traffic")
 def model_traffic():
     try:
@@ -577,6 +596,104 @@ def model_list():
         })
     except Exception as exc:
         return jsonify({"error": str(exc)}), 503
+
+
+@app.get("/api/model/overview")
+def model_overview():
+    """Tổng hợp endpoint, deployed models, registry và training metadata cho dashboard."""
+    try:
+        endpoint = _get_endpoint()
+        ep_res   = endpoint.gca_resource
+
+        deployed = [
+            {
+                "id":                  dm.id,
+                "display_name":        dm.display_name,
+                "model_resource_name": dm.model,
+                "traffic_pct":         int(ep_res.traffic_split.get(dm.id, 0)),
+                "serving_status":      "ACTIVE" if ep_res.traffic_split.get(dm.id, 0) > 0 else "STANDBY",
+            }
+            for dm in ep_res.deployed_models
+        ]
+
+        aiplatform.init(project=GCP_PROJECT, location=GCP_LOCATION)
+        registry_models = aiplatform.Model.list(
+            filter='display_name:"ai-news-classifier"',
+            order_by="create_time desc",
+        )
+        registry = [
+            {
+                "resource_name":  m.resource_name,
+                "display_name":   m.display_name,
+                "create_time":    m.create_time.isoformat() if m.create_time else None,
+                "version_id":     getattr(m, "version_id", None),
+            }
+            for m in registry_models[:20]
+        ]
+
+        rows = run_query(f"""
+            SELECT
+                job_id,
+                status,
+                triggered_at,
+                completed_at,
+                ROUND(accuracy, 4)  AS accuracy,
+                best_model,
+                rows_original,
+                rows_hitl,
+                model_resource_name,
+                endpoint_resource_name
+            FROM {ml_tbl(BQ_METADATA)}
+            ORDER BY triggered_at DESC
+            LIMIT 50
+        """)
+        training_history = [_serialize_training_row(r) for r in rows]
+        training_by_model = {}
+        for item in training_history:
+            key = _model_resource_key(item.get("model_resource_name"))
+            if key and key not in training_by_model:
+                training_by_model[key] = item
+
+        deployed_by_model = {}
+        for dm in deployed:
+            deployed_by_model[_model_resource_key(dm.get("model_resource_name"))] = dm
+
+        enriched_registry = []
+        for m in registry:
+            key = _model_resource_key(m.get("resource_name"))
+            deployed_match = deployed_by_model.get(key)
+            latest_training = training_by_model.get(key)
+            enriched_registry.append({
+                **m,
+                "is_deployed":     deployed_match is not None,
+                "deployed_id":     deployed_match.get("id") if deployed_match else None,
+                "traffic_pct":     deployed_match.get("traffic_pct", 0) if deployed_match else 0,
+                "serving_status":  deployed_match.get("serving_status") if deployed_match else "NOT_DEPLOYED",
+                "latest_training": latest_training,
+            })
+
+        return jsonify({
+            "endpoint": {
+                "id":       VERTEX_ENDPOINT_ID,
+                "project":  GCP_PROJECT,
+                "location": GCP_LOCATION,
+                "status":   "CONNECTED",
+            },
+            "traffic_split":   dict(ep_res.traffic_split),
+            "deployed_models": deployed,
+            "registry_models": enriched_registry,
+            "latest_training": training_history[0] if training_history else None,
+        })
+    except Exception as exc:
+        return jsonify({
+            "endpoint": {
+                "id":       VERTEX_ENDPOINT_ID or None,
+                "project":  GCP_PROJECT,
+                "location": GCP_LOCATION,
+                "status":   "ERROR",
+            },
+            "error": str(exc),
+        }), 503
 
 
 if __name__ == "__main__":
