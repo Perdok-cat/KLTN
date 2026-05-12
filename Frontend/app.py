@@ -39,7 +39,6 @@ from ui import (  # noqa: E402
     render_sidebar,
     section_header,
     set_label_filter,
-    set_source_filter,
     trim_text,
 )
 
@@ -360,7 +359,6 @@ if recent_articles:
     for idx, article in enumerate(recent_articles):
         article_id = str(article.get("id") or f"article_{idx}")
         preview = trim_text(article.get("summary") or article.get("snippet") or "", 220)
-        source = str(article.get("source") or "").strip()
         row_cols = st.columns([5.5, 1.25])
         with row_cols[0]:
             st.markdown(
@@ -380,9 +378,6 @@ if recent_articles:
                 st.session_state["_pending_article_id"] = article_id
                 st.query_params["article_id"] = article_id
                 st.switch_page("pages/1_Tin_Tức.py")
-            if source and st.button("Nguồn này", key=f"source_{article_id}", use_container_width=True):
-                set_source_filter(source)
-                st.rerun()
     st.markdown("</div>", unsafe_allow_html=True)
 else:
     st.markdown(

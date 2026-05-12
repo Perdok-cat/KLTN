@@ -870,10 +870,6 @@ def set_label_filter(label: str) -> None:
     st.session_state["_pending_global_label"] = label or ALL_OPTION
 
 
-def set_source_filter(source: str) -> None:
-    st.session_state["_pending_global_source"] = source or ALL_OPTION
-
-
 def label_name(label: str) -> str:
     if not label:
         return "Chưa phân loại"
@@ -1007,12 +1003,12 @@ def hero_html(kicker: str, title: str, subtitle: str, chips: Iterable[str] = (),
     chip_html = "".join(chips)
     chip_block = f'<div class="hero-chips">{chip_html}</div>' if chip_html else ""
     meta_block = f'<div class="hero-meta">{escape_html(meta)}</div>' if meta else ""
-    return f"""
-    <div class="hero-band">
-        <div class="page-kicker">{escape_html(kicker)}</div>
-        <h1>{escape_html(title)}</h1>
-        <p>{escape_html(subtitle)}</p>
-        {meta_block}
-        {chip_block}
-    </div>
-    """
+    return (
+        '<div class="hero-band">'
+        f'<div class="page-kicker">{escape_html(kicker)}</div>'
+        f'<h1>{escape_html(title)}</h1>'
+        f'<p>{escape_html(subtitle)}</p>'
+        f'{meta_block}'
+        f'{chip_block}'
+        '</div>'
+    )
