@@ -91,6 +91,13 @@ def _escape(v: str) -> str:
     return str(v or "").replace("'", "\\'")
 
 
+def _normalized_endpoint_id(value: str | None) -> str:
+    raw = str(value or "").strip()
+    if raw.lower() in {"", "none", "null"}:
+        return ""
+    return raw
+
+
 def _parse_range(value: str) -> tuple[str, str, str]:
     raw = str(value or "24h").strip().lower()
     if raw == "30d":
@@ -691,10 +698,11 @@ def drift_summary():
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _get_endpoint():
-    if not VERTEX_ENDPOINT_ID:
+    endpoint_id = _normalized_endpoint_id(VERTEX_ENDPOINT_ID)
+    if not endpoint_id:
         raise RuntimeError("VERTEX_ENDPOINT_ID chưa cấu hình")
     aiplatform.init(project=GCP_PROJECT, location=GCP_LOCATION)
-    return aiplatform.Endpoint(VERTEX_ENDPOINT_ID)
+    return aiplatform.Endpoint(endpoint_id)
 
 
 def _model_resource_key(resource_name: str | None) -> str:
@@ -849,7 +857,7 @@ def model_overview():
 
         return jsonify({
             "endpoint": {
-                "id":       VERTEX_ENDPOINT_ID,
+                "id":       _normalized_endpoint_id(VERTEX_ENDPOINT_ID) or None,
                 "project":  GCP_PROJECT,
                 "location": GCP_LOCATION,
                 "status":   "CONNECTED",
@@ -862,7 +870,7 @@ def model_overview():
     except Exception as exc:
         return jsonify({
             "endpoint": {
-                "id":       VERTEX_ENDPOINT_ID or None,
+                "id":       _normalized_endpoint_id(VERTEX_ENDPOINT_ID) or None,
                 "project":  GCP_PROJECT,
                 "location": GCP_LOCATION,
                 "status":   "ERROR",
