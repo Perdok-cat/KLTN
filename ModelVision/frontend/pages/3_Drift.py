@@ -19,6 +19,7 @@ with st.sidebar:
     st.page_link("pages/2_Training.py",  label="📈 Training History")
     st.page_link("pages/3_Drift.py",     label="📊 Data Drift")
     st.page_link("pages/4_Models.py",    label="🤖 Model Management")
+    st.page_link("pages/5_LLM_Monitor.py", label="🧠 LLM Monitor")
 
 st.title("📊 Data Drift")
 st.caption("Phân tích chi tiết phân phối nhãn giữa dữ liệu gốc, HITL staging và inference 7 ngày gần đây")

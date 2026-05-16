@@ -24,6 +24,7 @@ BQ_MLOPS_DATASET = os.getenv("BQ_MLOPS_DATASET",  "mlops_dataset")
 BQ_HITL_STAGING  = os.getenv("BQ_HITL_STAGING",   "hitl_staging_data")
 BQ_ORIGINAL      = os.getenv("BQ_ORIGINAL_TABLE", "original_training_data")
 BQ_METADATA      = os.getenv("BQ_METADATA_TABLE", "training_metadata")
+BQ_LLM_USAGE     = os.getenv("BQ_LLM_USAGE_TABLE", "llm_usage_log")
 
 HITL_PREPROCESS_CF_URL  = os.getenv("HITL_PREPROCESS_CF_URL",  "")
 TRIGGER_TRAINING_CF_URL = os.getenv("TRIGGER_TRAINING_CF_URL", "")
@@ -88,6 +89,41 @@ def run_dml(sql: str) -> int:
 
 def _escape(v: str) -> str:
     return str(v or "").replace("'", "\\'")
+
+
+def _parse_range(value: str) -> tuple[str, str, str]:
+    raw = str(value or "24h").strip().lower()
+    if raw == "30d":
+        return raw, "TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 30 DAY)", "DAY"
+    if raw == "7d":
+        return raw, "TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 7 DAY)", "DAY"
+    return "24h", "TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)", "HOUR"
+
+
+def _empty_llm_payload(range_key: str, runtime: str) -> dict:
+    return {
+        "runtime": runtime,
+        "range": range_key,
+        "provider": "",
+        "model_name": "",
+        "prompt_version": "",
+        "config_snapshot": {},
+        "kpis": {
+            "total_requests": 0,
+            "success_count": 0,
+            "error_count": 0,
+            "success_rate": 0.0,
+            "error_rate": 0.0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "avg_latency_ms": 0.0,
+            "total_cost_usd": 0.0,
+        },
+        "timeseries": [],
+        "error_breakdown": [],
+        "recent_logs": [],
+    }
 
 
 # ── Simple TTL cache ───────────────────────────────────────────────────────────
@@ -199,6 +235,153 @@ def _trigger_hitl_preprocess(count: int) -> None:
 @app.get("/api/health")
 def health():
     return jsonify({"status": "ok", "service": "modelvision-backend"})
+
+
+@app.get("/api/llm/overview")
+def llm_overview():
+    runtime = request.args.get("runtime", "summarize_articles").strip() or "summarize_articles"
+    range_key, start_expr, bucket_unit = _parse_range(request.args.get("range", "24h"))
+    bucket_expr = f"TIMESTAMP_TRUNC(started_at, {bucket_unit})"
+
+    try:
+        summary_rows = run_query(f"""
+            SELECT
+                COUNT(*) AS total_requests,
+                COUNTIF(success) AS success_count,
+                COUNTIF(NOT success) AS error_count,
+                COALESCE(SUM(input_tokens), 0) AS input_tokens,
+                COALESCE(SUM(output_tokens), 0) AS output_tokens,
+                COALESCE(SUM(total_tokens), 0) AS total_tokens,
+                COALESCE(AVG(latency_ms), 0) AS avg_latency_ms,
+                COALESCE(SUM(cost_estimate_usd), 0) AS total_cost_usd
+            FROM {ml_tbl(BQ_LLM_USAGE)}
+            WHERE runtime_name = '{_escape(runtime)}'
+              AND started_at >= {start_expr}
+        """)
+        latest_rows = run_query(f"""
+            SELECT
+                provider,
+                model_name,
+                prompt_version,
+                use_vertex,
+                vertex_location,
+                max_retries,
+                max_content_chars,
+                gemini_delay,
+                input_token_price_usd_per_1k,
+                output_token_price_usd_per_1k
+            FROM {ml_tbl(BQ_LLM_USAGE)}
+            WHERE runtime_name = '{_escape(runtime)}'
+            ORDER BY started_at DESC
+            LIMIT 1
+        """)
+        timeseries_rows = run_query(f"""
+            SELECT
+                CAST({bucket_expr} AS STRING) AS bucket,
+                COUNT(*) AS requests,
+                COALESCE(SUM(total_tokens), 0) AS total_tokens,
+                COALESCE(SUM(cost_estimate_usd), 0) AS total_cost_usd,
+                COUNTIF(NOT success) AS error_count
+            FROM {ml_tbl(BQ_LLM_USAGE)}
+            WHERE runtime_name = '{_escape(runtime)}'
+              AND started_at >= {start_expr}
+            GROUP BY bucket
+            ORDER BY bucket
+        """)
+        error_rows = run_query(f"""
+            SELECT
+                COALESCE(NULLIF(error_type, ''), 'unknown') AS error_type,
+                COUNT(*) AS count
+            FROM {ml_tbl(BQ_LLM_USAGE)}
+            WHERE runtime_name = '{_escape(runtime)}'
+              AND started_at >= {start_expr}
+              AND success = FALSE
+            GROUP BY error_type
+            ORDER BY count DESC, error_type
+        """)
+        recent_rows = run_query(f"""
+            SELECT
+                CAST(started_at AS STRING) AS started_at,
+                provider,
+                model_name,
+                total_tokens,
+                latency_ms,
+                success,
+                COALESCE(NULLIF(error_type, ''), '—') AS error_type,
+                token_source,
+                cost_estimate_usd
+            FROM {ml_tbl(BQ_LLM_USAGE)}
+            WHERE runtime_name = '{_escape(runtime)}'
+            ORDER BY started_at DESC
+            LIMIT 12
+        """)
+    except Exception as exc:
+        msg = str(exc)
+        if "Not found" in msg or "404" in msg:
+            return jsonify(_empty_llm_payload(range_key, runtime))
+        return jsonify({"error": msg}), 503
+
+    payload = _empty_llm_payload(range_key, runtime)
+    summary = summary_rows[0] if summary_rows else None
+    latest = latest_rows[0] if latest_rows else None
+
+    total_requests = int(summary.total_requests or 0) if summary else 0
+    success_count = int(summary.success_count or 0) if summary else 0
+    error_count = int(summary.error_count or 0) if summary else 0
+
+    payload["provider"] = latest.provider if latest else ""
+    payload["model_name"] = latest.model_name if latest else ""
+    payload["prompt_version"] = latest.prompt_version if latest else ""
+    payload["config_snapshot"] = {
+        "use_vertex": bool(latest.use_vertex) if latest else False,
+        "vertex_location": latest.vertex_location if latest else "",
+        "max_retries": int(latest.max_retries or 0) if latest else 0,
+        "max_content_chars": int(latest.max_content_chars or 0) if latest else 0,
+        "gemini_delay": float(latest.gemini_delay or 0) if latest else 0.0,
+        "input_token_price_usd_per_1k": float(latest.input_token_price_usd_per_1k or 0) if latest else 0.0,
+        "output_token_price_usd_per_1k": float(latest.output_token_price_usd_per_1k or 0) if latest else 0.0,
+    }
+    payload["kpis"] = {
+        "total_requests": total_requests,
+        "success_count": success_count,
+        "error_count": error_count,
+        "success_rate": round((success_count / total_requests * 100) if total_requests else 0.0, 2),
+        "error_rate": round((error_count / total_requests * 100) if total_requests else 0.0, 2),
+        "input_tokens": int(summary.input_tokens or 0) if summary else 0,
+        "output_tokens": int(summary.output_tokens or 0) if summary else 0,
+        "total_tokens": int(summary.total_tokens or 0) if summary else 0,
+        "avg_latency_ms": round(float(summary.avg_latency_ms or 0), 1) if summary else 0.0,
+        "total_cost_usd": round(float(summary.total_cost_usd or 0), 6) if summary else 0.0,
+    }
+    payload["timeseries"] = [
+        {
+            "bucket": r.bucket,
+            "requests": int(r.requests or 0),
+            "total_tokens": int(r.total_tokens or 0),
+            "total_cost_usd": float(r.total_cost_usd or 0),
+            "error_count": int(r.error_count or 0),
+        }
+        for r in timeseries_rows
+    ]
+    payload["error_breakdown"] = [
+        {"error_type": r.error_type, "count": int(r.count or 0)}
+        for r in error_rows
+    ]
+    payload["recent_logs"] = [
+        {
+            "started_at": r.started_at,
+            "provider": r.provider,
+            "model_name": r.model_name,
+            "total_tokens": int(r.total_tokens or 0),
+            "latency_ms": int(r.latency_ms or 0),
+            "success": bool(r.success),
+            "error_type": r.error_type,
+            "token_source": r.token_source,
+            "cost_estimate_usd": float(r.cost_estimate_usd or 0),
+        }
+        for r in recent_rows
+    ]
+    return jsonify(payload)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

@@ -95,6 +95,7 @@ with st.sidebar:
     st.page_link("pages/2_Training.py",  label="📈 Training History")
     st.page_link("pages/3_Drift.py",     label="📊 Data Drift")
     st.page_link("pages/4_Models.py",    label="🤖 Model Management")
+    st.page_link("pages/5_LLM_Monitor.py", label="🧠 LLM Monitor")
     st.divider()
     page_size = st.select_slider("Bài/trang", options=[5, 10, 20], value=10)
     st.divider()

@@ -7,6 +7,7 @@ import json
 import time
 import uuid
 import logging
+import math
 from datetime import datetime, timezone
 
 from google.cloud import bigquery
@@ -23,6 +24,8 @@ BQ_DATASET      = os.environ.get("BQ_DATASET",      "ai_news_data")
 BQ_SOURCE_TABLE = os.environ.get("BQ_SOURCE_TABLE", "labeled_articles")
 BQ_OUTPUT_TABLE = os.environ.get("BQ_OUTPUT_TABLE", "summarized_articles")
 BQ_FAILED_TABLE = os.environ.get("BQ_FAILED_TABLE", "failed_summaries")
+BQ_MLOPS_DATASET = os.environ.get("BQ_MLOPS_DATASET", "mlops_dataset")
+BQ_LLM_USAGE_TABLE = os.environ.get("BQ_LLM_USAGE_TABLE", "llm_usage_log")
 
 # Backend selection:
 #   USE_VERTEX=true  → Vertex AI (production, uses ADC / service account, no API key needed)
@@ -38,8 +41,11 @@ MAX_ARTICLES_PER_RUN = int(os.environ.get("MAX_ARTICLES_PER_RUN", "50"))
 GEMINI_DELAY         = float(os.environ.get("GEMINI_DELAY",         "7"))
 MAX_RETRIES          = int(os.environ.get("MAX_RETRIES",            "3"))
 MAX_CONTENT_CHARS    = int(os.environ.get("MAX_CONTENT_CHARS",      "12000"))
+INPUT_TOKEN_PRICE_USD_PER_1K = float(os.environ.get("INPUT_TOKEN_PRICE_USD_PER_1K", "0"))
+OUTPUT_TOKEN_PRICE_USD_PER_1K = float(os.environ.get("OUTPUT_TOKEN_PRICE_USD_PER_1K", "0"))
 
 SKIP_LABELS = {"NOISE"}
+LLM_RUNTIME_NAME = "summarize_articles"
 
 # ---------------------------------------------------------------------------
 # Response schema  (enforced by model; used by both backends)
@@ -252,6 +258,74 @@ def _classify_error(err: str) -> str:
     return "api_error"
 
 
+def _token_provider() -> str:
+    return "vertex" if USE_VERTEX else "gemini_api"
+
+
+def _safe_int(value) -> int:
+    try:
+        if value is None:
+            return 0
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _approx_token_count(text: str) -> int:
+    if not text:
+        return 0
+    return max(1, math.ceil(len(text) / 4))
+
+
+def _estimate_usage(prompt_text: str, response_text: str) -> dict:
+    input_tokens = _approx_token_count(prompt_text)
+    output_tokens = _approx_token_count(response_text)
+    return {
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": input_tokens + output_tokens,
+        "token_source": "estimated",
+    }
+
+
+def _extract_usage_stats(response, prompt_text: str, response_text: str) -> dict:
+    usage = getattr(response, "usage_metadata", None)
+    if usage:
+        if isinstance(usage, dict):
+            prompt_tokens = _safe_int(usage.get("prompt_token_count"))
+            output_tokens = _safe_int(
+                usage.get("candidates_token_count") or usage.get("output_token_count")
+            )
+            total_tokens = _safe_int(usage.get("total_token_count"))
+        else:
+            prompt_tokens = _safe_int(getattr(usage, "prompt_token_count", None))
+            output_tokens = _safe_int(
+                getattr(usage, "candidates_token_count", None)
+                or getattr(usage, "output_token_count", None)
+            )
+            total_tokens = _safe_int(getattr(usage, "total_token_count", None))
+
+        if total_tokens == 0:
+            total_tokens = prompt_tokens + output_tokens
+        if prompt_tokens or output_tokens or total_tokens:
+            return {
+                "input_tokens": prompt_tokens,
+                "output_tokens": output_tokens,
+                "total_tokens": total_tokens,
+                "token_source": "api",
+            }
+
+    return _estimate_usage(prompt_text, response_text)
+
+
+def _estimate_cost_usd(input_tokens: int, output_tokens: int) -> float:
+    return round(
+        (input_tokens / 1000.0) * INPUT_TOKEN_PRICE_USD_PER_1K
+        + (output_tokens / 1000.0) * OUTPUT_TOKEN_PRICE_USD_PER_1K,
+        6,
+    )
+
+
 def summarize_article(
     title: str,
     content: str,
@@ -308,10 +382,15 @@ def summarize_article(
         )
         if attempt > 0 and last_validation_errors:
             user_prompt += _RETRY_SUFFIX.format(errors="; ".join(last_validation_errors))
+        prompt_text = f"{_SYSTEM_PROMPT}\n\n{user_prompt}"
 
         response = None
+        response_text = ""
+        attempt_started_at = datetime.now(timezone.utc)
         try:
             response = model.generate_content(user_prompt, generation_config=gen_cfg)
+            response_text = getattr(response, "text", "") or ""
+            latency_ms = round((datetime.now(timezone.utc) - attempt_started_at).total_seconds() * 1000)
 
             # Check finish_reason before parsing
             if hasattr(response, "candidates") and response.candidates:
@@ -320,6 +399,20 @@ def summarize_article(
                     last_error_type = "safety_block"
                     last_error_msg  = f"finish_reason={finish_reason}"
                     logger.warning("[%s] Safety block on attempt %d.", short_link, attempt + 1)
+                    if bq_client:
+                        log_llm_usage(
+                            bq_client,
+                            started_at=attempt_started_at,
+                            latency_ms=latency_ms,
+                            success=False,
+                            error_type=last_error_type,
+                            source_id=source_id,
+                            link=link,
+                            prompt_text=prompt_text,
+                            response_text=response_text,
+                            response=response,
+                            attempt_number=attempt + 1,
+                        )
                     break  # safety blocks won't improve with retries
                 if "MAX_TOKENS" in finish_reason:
                     # Output was cut off — JSON is incomplete, will fail to parse.
@@ -330,7 +423,7 @@ def summarize_article(
                         short_link, attempt + 1,
                     )
 
-            parsed = _parse_response(response.text)
+            parsed = _parse_response(response_text)
 
             is_valid, validation_errors = validate_output(parsed)
             if not is_valid:
@@ -341,11 +434,39 @@ def summarize_article(
                     "[%s] Validation failed (attempt %d/%d): %s",
                     short_link, attempt + 1, MAX_RETRIES, last_error_msg,
                 )
+                if bq_client:
+                    log_llm_usage(
+                        bq_client,
+                        started_at=attempt_started_at,
+                        latency_ms=latency_ms,
+                        success=False,
+                        error_type=last_error_type,
+                        source_id=source_id,
+                        link=link,
+                        prompt_text=prompt_text,
+                        response_text=response_text,
+                        response=response,
+                        attempt_number=attempt + 1,
+                    )
                 if attempt < MAX_RETRIES - 1:
                     time.sleep(2)
                 continue
 
             # All checks passed
+            if bq_client:
+                log_llm_usage(
+                    bq_client,
+                    started_at=attempt_started_at,
+                    latency_ms=latency_ms,
+                    success=True,
+                    error_type=None,
+                    source_id=source_id,
+                    link=link,
+                    prompt_text=prompt_text,
+                    response_text=response_text,
+                    response=response,
+                    attempt_number=attempt + 1,
+                )
             return {
                 "summary":    str(parsed["summary"]),
                 "key_points": parsed["key_points"] if isinstance(parsed["key_points"], list) else [],
@@ -358,6 +479,7 @@ def summarize_article(
 
         except json.JSONDecodeError:
             raw_text = response.text if response and hasattr(response, "text") else ""
+            latency_ms = round((datetime.now(timezone.utc) - attempt_started_at).total_seconds() * 1000)
             last_validation_errors = ["JSON parse error"]
             last_error_type = "json_parse_error"
             last_error_msg  = f"Raw snippet: {raw_text[:300]}"
@@ -366,17 +488,46 @@ def summarize_article(
                 "[%s] JSON parse failed (attempt %d/%d). Raw output: %s",
                 short_link, attempt + 1, MAX_RETRIES, raw_text[:300],
             )
+            if bq_client:
+                log_llm_usage(
+                    bq_client,
+                    started_at=attempt_started_at,
+                    latency_ms=latency_ms,
+                    success=False,
+                    error_type=last_error_type,
+                    source_id=source_id,
+                    link=link,
+                    prompt_text=prompt_text,
+                    response_text=raw_text,
+                    response=response,
+                    attempt_number=attempt + 1,
+                )
             if attempt < MAX_RETRIES - 1:
                 time.sleep(2)
 
         except Exception as exc:
             err = str(exc)
+            latency_ms = round((datetime.now(timezone.utc) - attempt_started_at).total_seconds() * 1000)
             last_error_type = _classify_error(err)
             last_error_msg  = err[:500]
             logger.warning(
                 "[%s] API error attempt %d/%d [%s]: %s",
                 short_link, attempt + 1, MAX_RETRIES, last_error_type, err[:200],
             )
+            if bq_client:
+                log_llm_usage(
+                    bq_client,
+                    started_at=attempt_started_at,
+                    latency_ms=latency_ms,
+                    success=False,
+                    error_type=last_error_type,
+                    source_id=source_id,
+                    link=link,
+                    prompt_text=prompt_text,
+                    response_text=response_text,
+                    response=response,
+                    attempt_number=attempt + 1,
+                )
 
             if last_error_type == "rate_limit":
                 wait = 10.0
@@ -412,6 +563,10 @@ def _full(table: str) -> str:
     return f"`{GCP_PROJECT}.{BQ_DATASET}.{table}`"
 
 
+def _mlops_full(table: str) -> str:
+    return f"`{GCP_PROJECT}.{BQ_MLOPS_DATASET}.{table}`"
+
+
 # Module-level flag: ensure_output_table runs only once per container instance.
 # Cloud Run reuses warm containers, so this avoids repeated BQ metadata API calls.
 _tables_ready = False
@@ -443,6 +598,33 @@ _FAILED_SCHEMA = [
     bigquery.SchemaField("prompt_version", "STRING",    mode="NULLABLE"),
     bigquery.SchemaField("failed_at",      "TIMESTAMP", mode="REQUIRED"),
     bigquery.SchemaField("resolved",       "BOOLEAN",   mode="NULLABLE"),
+]
+
+_USAGE_SCHEMA = [
+    bigquery.SchemaField("request_id",                    "STRING",    mode="REQUIRED"),
+    bigquery.SchemaField("runtime_name",                  "STRING",    mode="REQUIRED"),
+    bigquery.SchemaField("provider",                      "STRING",    mode="NULLABLE"),
+    bigquery.SchemaField("model_name",                    "STRING",    mode="NULLABLE"),
+    bigquery.SchemaField("prompt_version",                "STRING",    mode="NULLABLE"),
+    bigquery.SchemaField("started_at",                    "TIMESTAMP", mode="REQUIRED"),
+    bigquery.SchemaField("latency_ms",                    "INTEGER",   mode="NULLABLE"),
+    bigquery.SchemaField("success",                       "BOOLEAN",   mode="NULLABLE"),
+    bigquery.SchemaField("error_type",                    "STRING",    mode="NULLABLE"),
+    bigquery.SchemaField("input_tokens",                  "INTEGER",   mode="NULLABLE"),
+    bigquery.SchemaField("output_tokens",                 "INTEGER",   mode="NULLABLE"),
+    bigquery.SchemaField("total_tokens",                  "INTEGER",   mode="NULLABLE"),
+    bigquery.SchemaField("token_source",                  "STRING",    mode="NULLABLE"),
+    bigquery.SchemaField("cost_estimate_usd",             "FLOAT",     mode="NULLABLE"),
+    bigquery.SchemaField("source_id",                     "STRING",    mode="NULLABLE"),
+    bigquery.SchemaField("link",                          "STRING",    mode="NULLABLE"),
+    bigquery.SchemaField("attempt_number",                "INTEGER",   mode="NULLABLE"),
+    bigquery.SchemaField("use_vertex",                    "BOOLEAN",   mode="NULLABLE"),
+    bigquery.SchemaField("vertex_location",               "STRING",    mode="NULLABLE"),
+    bigquery.SchemaField("max_retries",                   "INTEGER",   mode="NULLABLE"),
+    bigquery.SchemaField("max_content_chars",             "INTEGER",   mode="NULLABLE"),
+    bigquery.SchemaField("gemini_delay",                  "FLOAT",     mode="NULLABLE"),
+    bigquery.SchemaField("input_token_price_usd_per_1k",  "FLOAT",     mode="NULLABLE"),
+    bigquery.SchemaField("output_token_price_usd_per_1k", "FLOAT",     mode="NULLABLE"),
 ]
 
 
@@ -482,7 +664,7 @@ def _sync_table(
 def ensure_output_table(client: bigquery.Client) -> None:
     """
     Idempotent setup: run once per container instance (guarded by _tables_ready).
-    Creates or migrates summarized_articles and failed_summaries.
+    Creates or migrates summarized_articles, failed_summaries and llm_usage_log.
     """
     global _tables_ready
     if _tables_ready:
@@ -496,11 +678,26 @@ def ensure_output_table(client: bigquery.Client) -> None:
         ds.location = "US"
         client.create_dataset(ds, exists_ok=True)
 
+    mlops_ref = bigquery.DatasetReference(GCP_PROJECT, BQ_MLOPS_DATASET)
+    try:
+        client.get_dataset(mlops_ref)
+    except Exception:
+        ds = bigquery.Dataset(mlops_ref)
+        ds.location = "US"
+        client.create_dataset(ds, exists_ok=True)
+
     _sync_table(client, dataset_ref, BQ_OUTPUT_TABLE, _SUMMARY_SCHEMA)
     _sync_table(client, dataset_ref, BQ_FAILED_TABLE, _FAILED_SCHEMA)
+    _sync_table(client, mlops_ref, BQ_LLM_USAGE_TABLE, _USAGE_SCHEMA)
 
     _tables_ready = True
-    logger.info("BQ tables ready: %s, %s.", BQ_OUTPUT_TABLE, BQ_FAILED_TABLE)
+    logger.info(
+        "BQ tables ready: %s, %s, %s.%s.",
+        BQ_OUTPUT_TABLE,
+        BQ_FAILED_TABLE,
+        BQ_MLOPS_DATASET,
+        BQ_LLM_USAGE_TABLE,
+    )
 
 
 def log_failure(
@@ -530,6 +727,56 @@ def log_failure(
         logger.error("Could not write failure record to BQ: %s", errors)
     else:
         logger.info("Failure logged → %s [%s]", (link or "")[:60], error_type)
+
+
+def log_llm_usage(
+    client: bigquery.Client,
+    *,
+    started_at: datetime,
+    latency_ms: int,
+    success: bool,
+    error_type: str | None,
+    source_id: str,
+    link: str,
+    prompt_text: str,
+    response_text: str,
+    response=None,
+    attempt_number: int = 1,
+) -> None:
+    usage = _extract_usage_stats(response, prompt_text, response_text)
+    row = {
+        "request_id": str(uuid.uuid4()),
+        "runtime_name": LLM_RUNTIME_NAME,
+        "provider": _token_provider(),
+        "model_name": GEMINI_MODEL,
+        "prompt_version": PROMPT_VERSION,
+        "started_at": started_at.isoformat(),
+        "latency_ms": int(latency_ms),
+        "success": bool(success),
+        "error_type": error_type or "",
+        "input_tokens": usage["input_tokens"],
+        "output_tokens": usage["output_tokens"],
+        "total_tokens": usage["total_tokens"],
+        "token_source": usage["token_source"],
+        "cost_estimate_usd": _estimate_cost_usd(
+            usage["input_tokens"],
+            usage["output_tokens"],
+        ),
+        "source_id": source_id or "",
+        "link": link or "",
+        "attempt_number": int(attempt_number),
+        "use_vertex": USE_VERTEX,
+        "vertex_location": VERTEX_LOCATION if USE_VERTEX else "",
+        "max_retries": MAX_RETRIES,
+        "max_content_chars": MAX_CONTENT_CHARS,
+        "gemini_delay": GEMINI_DELAY,
+        "input_token_price_usd_per_1k": INPUT_TOKEN_PRICE_USD_PER_1K,
+        "output_token_price_usd_per_1k": OUTPUT_TOKEN_PRICE_USD_PER_1K,
+    }
+    table_id = f"{GCP_PROJECT}.{BQ_MLOPS_DATASET}.{BQ_LLM_USAGE_TABLE}"
+    errors = client.insert_rows_json(table_id, [row])
+    if errors:
+        logger.error("Could not write llm usage record to BQ: %s", errors)
 
 
 def fetch_unsummarized(client: bigquery.Client) -> list[dict]:
