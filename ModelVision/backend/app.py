@@ -29,7 +29,7 @@ BQ_LLM_USAGE     = os.getenv("BQ_LLM_USAGE_TABLE", "llm_usage_log")
 HITL_PREPROCESS_CF_URL  = os.getenv("HITL_PREPROCESS_CF_URL",  "")
 TRIGGER_TRAINING_CF_URL = os.getenv("TRIGGER_TRAINING_CF_URL", "")
 HITL_BATCH_THRESHOLD    = int(os.getenv("HITL_BATCH_THRESHOLD", "10"))
-VERTEX_ENDPOINT_ID      = os.getenv("VERTEX_ENDPOINT_ID", "")
+VERTEX_ENDPOINT_ID      = os.getenv("VERTEX_ENDPOINT_ID", "").strip()
 CACHE_TTL               = int(os.getenv("CACHE_TTL", "300"))
 
 LABEL_MAP = {0: "DEEP DIVE", 1: "MARKET SIGNALS", 2: "NOISE", 3: "SOLUTIONS & USE CASES"}
@@ -701,6 +701,26 @@ def _model_resource_key(resource_name: str | None) -> str:
     return (resource_name or "").split("@", 1)[0].strip()
 
 
+def _list_registry_models(prefix: str = "ai-news-classifier", limit: int = 20) -> list[dict]:
+    aiplatform.init(project=GCP_PROJECT, location=GCP_LOCATION)
+    models = aiplatform.Model.list(order_by="create_time desc")
+    matched = []
+    for m in models:
+        display_name = getattr(m, "display_name", "") or ""
+        if display_name == prefix or display_name.startswith(f"{prefix}-"):
+            matched.append(
+                {
+                    "resource_name": m.resource_name,
+                    "display_name": display_name,
+                    "create_time": m.create_time.isoformat() if m.create_time else None,
+                    "version_id": getattr(m, "version_id", None),
+                }
+            )
+        if len(matched) >= limit:
+            break
+    return matched
+
+
 def _serialize_training_row(r) -> dict:
     return {
         "job_id":                r.job_id,
@@ -761,22 +781,7 @@ def model_traffic_update():
 def model_list():
     """Trả về danh sách model versions trong Vertex Model Registry có prefix ai-news-classifier."""
     try:
-        aiplatform.init(project=GCP_PROJECT, location=GCP_LOCATION)
-        models = aiplatform.Model.list(
-            filter='display_name:"ai-news-classifier"',
-            order_by="create_time desc",
-        )
-        return jsonify({
-            "models": [
-                {
-                    "resource_name":  m.resource_name,
-                    "display_name":   m.display_name,
-                    "create_time":    m.create_time.isoformat() if m.create_time else None,
-                    "version_id":     getattr(m, "version_id", None),
-                }
-                for m in models[:20]
-            ]
-        })
+        return jsonify({"models": _list_registry_models(limit=20)})
     except Exception as exc:
         return jsonify({"error": str(exc)}), 503
 
@@ -799,20 +804,7 @@ def model_overview():
             for dm in ep_res.deployed_models
         ]
 
-        aiplatform.init(project=GCP_PROJECT, location=GCP_LOCATION)
-        registry_models = aiplatform.Model.list(
-            filter='display_name:"ai-news-classifier"',
-            order_by="create_time desc",
-        )
-        registry = [
-            {
-                "resource_name":  m.resource_name,
-                "display_name":   m.display_name,
-                "create_time":    m.create_time.isoformat() if m.create_time else None,
-                "version_id":     getattr(m, "version_id", None),
-            }
-            for m in registry_models[:20]
-        ]
+        registry = _list_registry_models(limit=20)
 
         rows = run_query(f"""
             SELECT
