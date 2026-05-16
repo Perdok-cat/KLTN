@@ -494,6 +494,7 @@ else:
     endpoint_cols = st.columns(2)
     for idx, item in enumerate(endpoints):
         with endpoint_cols[idx % 2]:
+            traffic_pct_text = f"{fmt_int(item.get('total_traffic_pct'))}%"
             endpoint_html = (
                 f'<div class="endpoint-card endpoint-card--{"active" if item.get("status") == "ACTIVE" else "idle"}">'
                 '<div class="endpoint-card__top">'
@@ -505,7 +506,7 @@ else:
                 "</div>"
                 '<div class="endpoint-card__metrics">'
                 f'{mini_stat("Deployed models", fmt_int(item.get("deployed_model_count")))}'
-                f'{mini_stat("Traffic", f"{fmt_int(item.get("total_traffic_pct"))}%")}'
+                f'{mini_stat("Traffic", traffic_pct_text)}'
                 f'{mini_stat("Created", fmt_time(item.get("create_time")))}'
                 "</div>"
             )
