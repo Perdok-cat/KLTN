@@ -126,8 +126,8 @@ def inject_styles() -> None:
         }
 
         .mm-kpi {
-            min-height: 152px;
-            height: 100%;
+            box-sizing: border-box;
+            height: 178px;
             padding: 1rem 1.05rem;
             display: flex;
             flex-direction: column;
@@ -153,6 +153,7 @@ def inject_styles() -> None:
             color: var(--mm-muted);
             font-size: 0.88rem;
             font-weight: 720;
+            min-height: 1.3rem;
         }
 
         .mm-kpi__value {
@@ -168,6 +169,7 @@ def inject_styles() -> None:
             color: var(--mm-muted);
             font-size: 0.82rem;
             line-height: 1.45;
+            min-height: 2.45rem;
         }
 
         .mm-section-title {
@@ -324,6 +326,11 @@ def inject_styles() -> None:
         @media (max-width: 900px) {
             .block-container {
                 padding: 1.1rem 0.95rem 2rem;
+            }
+
+            .mm-kpi {
+                height: auto;
+                min-height: 178px;
             }
 
             .mm-hero {
