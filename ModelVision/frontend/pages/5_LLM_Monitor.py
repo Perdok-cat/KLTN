@@ -134,8 +134,12 @@ def inject_styles() -> None:
         }
 
         .metric-card {
-            min-height: 164px;
+            min-height: 184px;
+            height: 100%;
             padding: 1rem 1.05rem;
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-start;
             border-radius: 22px;
             border: 1px solid rgba(220, 230, 242, 0.95);
             background: linear-gradient(180deg, rgba(255, 255, 255, 0.94) 0%, rgba(248, 250, 252, 0.98) 100%);
@@ -166,10 +170,15 @@ def inject_styles() -> None:
             font-size: 1.74rem;
             font-weight: 840;
             line-height: 1.05;
+            min-height: 3.2rem;
+            display: flex;
+            align-items: flex-end;
         }
 
         .metric-card__meta {
-            margin-top: 0.55rem;
+            margin-top: auto;
+            padding-top: 0.85rem;
+            min-height: 3.5rem;
             color: var(--ops-muted);
             font-size: 0.82rem;
             line-height: 1.45;
