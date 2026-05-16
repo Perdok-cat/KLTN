@@ -273,30 +273,30 @@ def status_chip(icon: str, label: str, value: str) -> str:
 
 
 def metric_card(icon: str, accent: str, label: str, value: str, meta: str) -> str:
-    return f"""
-    <div class="metric-card" style="--metric-accent:{accent}">
-        <div class="metric-card__icon">{escape(icon)}</div>
-        <div class="metric-card__label">{escape(label)}</div>
-        <div class="metric-card__value">{escape(value)}</div>
-        <div class="metric-card__meta">{escape(meta)}</div>
-    </div>
-    """
+    return (
+        f'<div class="metric-card" style="--metric-accent:{accent}">'
+        f'<div class="metric-card__icon">{escape(icon)}</div>'
+        f'<div class="metric-card__label">{escape(label)}</div>'
+        f'<div class="metric-card__value">{escape(value)}</div>'
+        f'<div class="metric-card__meta">{escape(meta)}</div>'
+        "</div>"
+    )
 
 
 def section_header(title: str, caption: str) -> str:
-    return f"""
-    <div class="section-heading__title">{escape(title)}</div>
-    <div class="section-heading__caption">{escape(caption)}</div>
-    """
+    return (
+        f'<div class="section-heading__title">{escape(title)}</div>'
+        f'<div class="section-heading__caption">{escape(caption)}</div>'
+    )
 
 
 def snapshot_card(label: str, value: str) -> str:
-    return f"""
-    <div class="snapshot-card">
-        <div class="snapshot-card__label">{escape(label)}</div>
-        <div class="snapshot-card__value">{escape(value)}</div>
-    </div>
-    """
+    return (
+        '<div class="snapshot-card">'
+        f'<div class="snapshot-card__label">{escape(label)}</div>'
+        f'<div class="snapshot-card__value">{escape(value)}</div>'
+        "</div>"
+    )
 
 
 @st.cache_data(ttl=30, show_spinner=False)
@@ -523,12 +523,12 @@ with left_col:
         html += snapshot_card("Max content chars", fmt_int(config.get("max_content_chars")))
         html += snapshot_card("Gemini delay", f"{fmt_float(config.get('gemini_delay'), 1)} s")
         html += "</div>"
-        html += """
-        <div class="ops-note">
-            Nếu <b>USE_VERTEX=true</b> thì đây là Gemini chạy qua Vertex AI Generative API,
-            không phải Vertex Endpoint của model phân loại.
-        </div>
-        """
+        html += (
+            '<div class="ops-note">'
+            "Nếu <b>USE_VERTEX=true</b> thì đây là Gemini chạy qua Vertex AI Generative API, "
+            "không phải Vertex Endpoint của model phân loại."
+            "</div>"
+        )
         st.markdown(html, unsafe_allow_html=True)
 
 with right_col:
