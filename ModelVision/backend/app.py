@@ -729,6 +729,49 @@ def _list_registry_models(prefix: str = "ai-news-classifier", limit: int = 20) -
     return matched
 
 
+def _serialize_deployed_model(dm, traffic_split: dict) -> dict:
+    traffic_pct = int(traffic_split.get(dm.id, 0))
+    return {
+        "id": dm.id,
+        "display_name": dm.display_name,
+        "model_resource_name": dm.model,
+        "traffic_pct": traffic_pct,
+        "serving_status": "ACTIVE" if traffic_pct > 0 else "STANDBY",
+    }
+
+
+def _list_active_endpoints(limit: int = 10) -> list[dict]:
+    aiplatform.init(project=GCP_PROJECT, location=GCP_LOCATION)
+    endpoints = aiplatform.Endpoint.list(order_by="create_time desc")
+    results: list[dict] = []
+    for ep in endpoints:
+        endpoint_ref = aiplatform.Endpoint(getattr(ep, "resource_name", None) or getattr(ep, "name", None))
+        ep_res = endpoint_ref.gca_resource
+        traffic_split = dict(getattr(ep_res, "traffic_split", {}) or {})
+        deployed_models = [
+            _serialize_deployed_model(dm, traffic_split)
+            for dm in getattr(ep_res, "deployed_models", []) or []
+        ]
+        if not deployed_models:
+            continue
+        results.append(
+            {
+                "id": getattr(ep_res, "name", "").split("/")[-1] or getattr(ep, "name", ""),
+                "resource_name": getattr(ep_res, "name", "") or getattr(ep, "resource_name", ""),
+                "display_name": getattr(ep_res, "display_name", "") or getattr(ep, "display_name", "") or "Vertex Endpoint",
+                "create_time": ep.create_time.isoformat() if getattr(ep, "create_time", None) else None,
+                "traffic_split": traffic_split,
+                "deployed_models": deployed_models,
+                "deployed_model_count": len(deployed_models),
+                "total_traffic_pct": sum(item["traffic_pct"] for item in deployed_models),
+                "status": "ACTIVE" if any(item["traffic_pct"] > 0 for item in deployed_models) else "IDLE",
+            }
+        )
+        if len(results) >= limit:
+            break
+    return results
+
+
 def _serialize_training_row(r) -> dict:
     return {
         "job_id":                r.job_id,
@@ -796,23 +839,17 @@ def model_list():
 
 @app.get("/api/model/overview")
 def model_overview():
-    """Tổng hợp endpoint, deployed models, registry và training metadata cho dashboard."""
+    """Tổng hợp active endpoints, deployed models, registry và training metadata cho dashboard."""
     try:
-        endpoint = _get_endpoint()
-        ep_res   = endpoint.gca_resource
-
-        deployed = [
-            {
-                "id":                  dm.id,
-                "display_name":        dm.display_name,
-                "model_resource_name": dm.model,
-                "traffic_pct":         int(ep_res.traffic_split.get(dm.id, 0)),
-                "serving_status":      "ACTIVE" if ep_res.traffic_split.get(dm.id, 0) > 0 else "STANDBY",
-            }
-            for dm in ep_res.deployed_models
-        ]
-
+        endpoints = _list_active_endpoints(limit=10)
         registry = _list_registry_models(limit=20)
+        configured_endpoint_error = None
+        configured_endpoint_res = None
+        try:
+            configured_endpoint = _get_endpoint()
+            configured_endpoint_res = configured_endpoint.gca_resource
+        except Exception as exc:
+            configured_endpoint_error = str(exc)
 
         rows = run_query(f"""
             SELECT
@@ -837,6 +874,13 @@ def model_overview():
             if key and key not in training_by_model:
                 training_by_model[key] = item
 
+        deployed = []
+        for endpoint_item in endpoints:
+            for dm in endpoint_item.get("deployed_models", []):
+                training = training_by_model.get(_model_resource_key(dm.get("model_resource_name")))
+                dm["latest_training"] = training
+                deployed.append(dm)
+
         deployed_by_model = {}
         for dm in deployed:
             deployed_by_model[_model_resource_key(dm.get("model_resource_name"))] = dm
@@ -857,15 +901,21 @@ def model_overview():
 
         return jsonify({
             "endpoint": {
-                "id":       _normalized_endpoint_id(VERTEX_ENDPOINT_ID) or None,
+                "id":       (
+                    getattr(configured_endpoint_res, "name", "").split("/")[-1]
+                    if configured_endpoint_res else _normalized_endpoint_id(VERTEX_ENDPOINT_ID) or None
+                ),
                 "project":  GCP_PROJECT,
                 "location": GCP_LOCATION,
-                "status":   "CONNECTED",
+                "status":   "CONNECTED" if configured_endpoint_res else "UNCONFIGURED",
             },
-            "traffic_split":   dict(ep_res.traffic_split),
+            "active_endpoint_count": len(endpoints),
+            "endpoints": endpoints,
+            "traffic_split":   dict(getattr(configured_endpoint_res, "traffic_split", {}) or {}),
             "deployed_models": deployed,
             "registry_models": enriched_registry,
             "latest_training": training_history[0] if training_history else None,
+            "configured_endpoint_error": configured_endpoint_error,
         })
     except Exception as exc:
         return jsonify({
