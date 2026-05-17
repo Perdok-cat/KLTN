@@ -12,7 +12,7 @@ from utils.gcp_auth import auth_headers
 
 MV_API_URL = os.getenv("MV_API_URL", "http://localhost:5001")
 
-st.set_page_config(page_title="LLM Monitor · ModelVision", page_icon="🧠", layout="wide")
+st.set_page_config(page_title="LLM Monitor · ModelVision", layout="wide")
 
 
 def inject_styles() -> None:
@@ -146,19 +146,7 @@ def inject_styles() -> None:
             box-shadow: 0 16px 30px rgba(15, 23, 42, 0.06);
         }
 
-        .metric-card__icon {
-            display: inline-grid;
-            place-items: center;
-            width: 44px;
-            height: 44px;
-            border-radius: 15px;
-            font-size: 1.1rem;
-            color: #ffffff;
-            background: var(--metric-accent);
-        }
-
         .metric-card__label {
-            margin-top: 0.9rem;
             color: var(--ops-muted);
             font-size: 0.88rem;
             font-weight: 700;
@@ -277,14 +265,13 @@ def provider_label(provider: str, use_vertex: bool) -> str:
     return provider or "Chưa có dữ liệu"
 
 
-def status_chip(icon: str, label: str, value: str) -> str:
-    return f'<div class="ops-chip"><span>{escape(icon)}</span><span>{escape(label)}:</span><b>{escape(value)}</b></div>'
+def status_chip(label: str, value: str) -> str:
+    return f'<div class="ops-chip"><span>{escape(label)}:</span><b>{escape(value)}</b></div>'
 
 
-def metric_card(icon: str, accent: str, label: str, value: str, meta: str) -> str:
+def metric_card(accent: str, label: str, value: str, meta: str) -> str:
     return (
         f'<div class="metric-card" style="--metric-accent:{accent}">'
-        f'<div class="metric-card__icon">{escape(icon)}</div>'
         f'<div class="metric-card__label">{escape(label)}</div>'
         f'<div class="metric-card__value">{escape(value)}</div>'
         f'<div class="metric-card__meta">{escape(meta)}</div>'
@@ -432,16 +419,15 @@ def build_error_charts(error_breakdown: list[dict]) -> tuple[go.Figure, go.Figur
 inject_styles()
 
 with st.sidebar:
-    st.image("https://img.icons8.com/fluency/96/artificial-intelligence.png", width=80)
     st.title("ModelVision")
     st.caption("Internal MLOps Dashboard · AI News Pipeline")
     st.divider()
-    st.page_link("app.py",               label="🏠 Tổng quan")
-    st.page_link("pages/1_HITL.py",      label="🛡️ HITL Review")
-    st.page_link("pages/2_Training.py",  label="📈 Training History")
-    st.page_link("pages/3_Drift.py",     label="📊 Data Drift")
-    st.page_link("pages/4_Models.py",    label="🤖 Model Management")
-    st.page_link("pages/5_LLM_Monitor.py", label="🧠 LLM Monitor")
+    st.page_link("app.py",               label="Tổng quan")
+    st.page_link("pages/1_HITL.py",      label="HITL Review")
+    st.page_link("pages/2_Training.py",  label="Training History")
+    st.page_link("pages/3_Drift.py",     label="Data Drift")
+    st.page_link("pages/4_Models.py",    label="Model Management")
+    st.page_link("pages/5_LLM_Monitor.py", label="LLM Monitor")
     st.divider()
 
 toolbar_left, toolbar_right = st.columns([2.4, 1])
@@ -491,9 +477,9 @@ st.markdown(
             token usage, chi phí ước lượng, độ trễ và các lỗi nổi bật theo từng khoảng thời gian.
         </p>
         <div class="ops-chip-row">
-            {status_chip("⚙️", "Provider", provider)}
-            {status_chip("🧠", "Model", model_name)}
-            {status_chip("📝", "Prompt", prompt_version)}
+            {status_chip("Provider", provider)}
+            {status_chip("Model", model_name)}
+            {status_chip("Prompt", prompt_version)}
         </div>
     </div>
     """,
@@ -501,12 +487,12 @@ st.markdown(
 )
 
 metric_specs = [
-    ("📡", "#2563eb", "Total requests", fmt_int(kpis.get("total_requests")), f"{range_key} · Tổng số lần gọi model được ghi nhận."),
-    ("✅", "#16a34a", "Success rate", f"{fmt_float(kpis.get('success_rate'), 1)}%", f"{fmt_int(kpis.get('success_count'))} request thành công."),
-    ("🧮", "#0f766e", "Total tokens", fmt_int(kpis.get("total_tokens")), f"Input {fmt_int(kpis.get('input_tokens'))} · Output {fmt_int(kpis.get('output_tokens'))}."),
-    ("💸", "#d97706", "Estimated cost", fmt_currency(kpis.get("total_cost_usd")), "Chi phí ước lượng từ usage log."),
-    ("⚡", "#7c3aed", "Avg latency", f"{fmt_float(kpis.get('avg_latency_ms'), 0)} ms", "Độ trễ trung bình của mỗi lần gọi."),
-    ("🚨", "#dc2626", "Error rate", f"{fmt_float(kpis.get('error_rate'), 1)}%", f"{fmt_int(kpis.get('error_count'))} request gặp lỗi."),
+    ("#2563eb", "Total requests", fmt_int(kpis.get("total_requests")), f"{range_key} · Tổng số lần gọi model được ghi nhận."),
+    ("#16a34a", "Success rate", f"{fmt_float(kpis.get('success_rate'), 1)}%", f"{fmt_int(kpis.get('success_count'))} request thành công."),
+    ("#0f766e", "Total tokens", fmt_int(kpis.get("total_tokens")), f"Input {fmt_int(kpis.get('input_tokens'))} · Output {fmt_int(kpis.get('output_tokens'))}."),
+    ("#d97706", "Estimated cost", fmt_currency(kpis.get("total_cost_usd")), "Chi phí ước lượng từ usage log."),
+    ("#7c3aed", "Avg latency", f"{fmt_float(kpis.get('avg_latency_ms'), 0)} ms", "Độ trễ trung bình của mỗi lần gọi."),
+    ("#dc2626", "Error rate", f"{fmt_float(kpis.get('error_rate'), 1)}%", f"{fmt_int(kpis.get('error_count'))} request gặp lỗi."),
 ]
 metric_cols = st.columns(len(metric_specs))
 for col, spec in zip(metric_cols, metric_specs):

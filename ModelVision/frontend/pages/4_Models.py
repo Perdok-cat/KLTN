@@ -8,7 +8,7 @@ from utils.gcp_auth import auth_headers
 
 MV_API_URL = os.getenv("MV_API_URL", "http://localhost:5001")
 
-st.set_page_config(page_title="Model Management · ModelVision", page_icon="🤖", layout="wide")
+st.set_page_config(page_title="Model Management · ModelVision", layout="wide")
 
 
 def inject_styles() -> None:
@@ -137,19 +137,7 @@ def inject_styles() -> None:
             box-shadow: 0 16px 30px rgba(15, 23, 42, 0.06);
         }
 
-        .mm-kpi__icon {
-            display: inline-grid;
-            place-items: center;
-            width: 44px;
-            height: 44px;
-            border-radius: 15px;
-            font-size: 1.15rem;
-            color: #fff;
-            background: var(--kpi-color);
-        }
-
         .mm-kpi__label {
-            margin-top: 0.9rem;
             color: var(--mm-muted);
             font-size: 0.88rem;
             font-weight: 720;
@@ -367,18 +355,16 @@ def fmt_time(value: str | None) -> str:
 
 def status_badge(status: str) -> str:
     tone = "active" if str(status).upper() == "ACTIVE" else "idle"
-    icon = "●" if tone == "active" else "○"
-    return f'<div class="status-badge status-badge--{tone}">{icon} {escape(status or "UNKNOWN")}</div>'
+    return f'<div class="status-badge status-badge--{tone}">{escape(status or "UNKNOWN")}</div>'
 
 
-def chip(icon: str, label: str, value: str) -> str:
-    return f'<div class="mm-chip"><span>{escape(icon)}</span><span>{escape(label)}:</span><b>{escape(value)}</b></div>'
+def chip(label: str, value: str) -> str:
+    return f'<div class="mm-chip"><span>{escape(label)}:</span><b>{escape(value)}</b></div>'
 
 
-def kpi_card(icon: str, color: str, label: str, value: str, meta: str) -> str:
+def kpi_card(color: str, label: str, value: str, meta: str) -> str:
     return (
         f'<div class="mm-kpi" style="--kpi-color:{color}">'
-        f'<div class="mm-kpi__icon">{escape(icon)}</div>'
         f'<div class="mm-kpi__label">{escape(label)}</div>'
         f'<div class="mm-kpi__value">{escape(value)}</div>'
         f'<div class="mm-kpi__meta">{escape(meta)}</div>'
@@ -395,8 +381,8 @@ def mini_stat(label: str, value: str) -> str:
     )
 
 
-def meta_chip(icon: str, text: str) -> str:
-    return f'<div class="meta-chip">{escape(icon)} {escape(text)}</div>'
+def meta_chip(text: str) -> str:
+    return f'<div class="meta-chip">{escape(text)}</div>'
 
 
 @st.cache_data(ttl=30, show_spinner=False)
@@ -409,15 +395,14 @@ def fetch_overview() -> dict:
 inject_styles()
 
 with st.sidebar:
-    st.image("https://img.icons8.com/fluency/96/artificial-intelligence.png", width=80)
     st.title("ModelVision")
     st.divider()
-    st.page_link("app.py", label="🏠 Tổng quan")
-    st.page_link("pages/1_HITL.py", label="🛡️ HITL Review")
-    st.page_link("pages/2_Training.py", label="📈 Training History")
-    st.page_link("pages/3_Drift.py", label="📊 Data Drift")
-    st.page_link("pages/4_Models.py", label="🤖 Model Management")
-    st.page_link("pages/5_LLM_Monitor.py", label="🧠 LLM Monitor")
+    st.page_link("app.py", label="Tổng quan")
+    st.page_link("pages/1_HITL.py", label="HITL Review")
+    st.page_link("pages/2_Training.py", label="Training History")
+    st.page_link("pages/3_Drift.py", label="Data Drift")
+    st.page_link("pages/4_Models.py", label="Model Management")
+    st.page_link("pages/5_LLM_Monitor.py", label="LLM Monitor")
 
 with st.spinner("Đang tải trạng thái endpoint…"):
     try:
@@ -438,9 +423,9 @@ total_deployed = sum(int(item.get("deployed_model_count", 0) or 0) for item in e
 active_traffic = sum(int(item.get("total_traffic_pct", 0) or 0) for item in endpoints)
 
 hero_chips = [
-    chip("📍", "Region", str(endpoint.get("location") or "—")),
-    chip("🛰️", "Configured endpoint", configured_endpoint_id or "—"),
-    chip("✅", "Status", str(endpoint.get("status") or "UNKNOWN")),
+    chip("Region", str(endpoint.get("location") or "—")),
+    chip("Configured endpoint", configured_endpoint_id or "—"),
+    chip("Status", str(endpoint.get("status") or "UNKNOWN")),
 ]
 
 st.markdown(
@@ -461,17 +446,17 @@ st.markdown(
 
 toolbar_left, toolbar_right = st.columns([1, 5])
 with toolbar_left:
-    if st.button("🔄 Làm mới", use_container_width=True):
+    if st.button("Làm mới", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
 with toolbar_right:
     st.caption(f"Nguồn dữ liệu: `{MV_API_URL}/api/model/overview`")
 
 kpis = [
-    ("🛰️", "#2563eb", "Active endpoints", fmt_int(active_endpoint_count), "Số endpoint có model đang được deploy."),
-    ("🤖", "#16a34a", "Deployed models", fmt_int(total_deployed), "Tổng số model đang xuất hiện trong các endpoint hoạt động."),
-    ("📦", "#0f766e", "Registry entries", fmt_int(len(registry_models)), "Các model mới nhất thấy trong Vertex Model Registry."),
-    ("🚦", "#d97706", "Total traffic", f"{fmt_int(active_traffic)}%", "Tổng traffic hiện thấy trên các endpoint hoạt động."),
+    ("#2563eb", "Active endpoints", fmt_int(active_endpoint_count), "Số endpoint có model đang được deploy."),
+    ("#16a34a", "Deployed models", fmt_int(total_deployed), "Tổng số model đang xuất hiện trong các endpoint hoạt động."),
+    ("#0f766e", "Registry entries", fmt_int(len(registry_models)), "Các model mới nhất thấy trong Vertex Model Registry."),
+    ("#d97706", "Total traffic", f"{fmt_int(active_traffic)}%", "Tổng traffic hiện thấy trên các endpoint hoạt động."),
 ]
 kpi_cols = st.columns(len(kpis))
 for col, spec in zip(kpi_cols, kpis):
@@ -531,13 +516,13 @@ else:
                     f'<div class="deployed-row__traffic">{fmt_int(dm.get("traffic_pct"))}%</div>'
                     "</div>"
                     '<div class="deployed-row__meta">'
-                    f'{meta_chip("🆔", deployed_id_text)}'
-                    f'{meta_chip("📡", serving_status_text)}'
+                    f'{meta_chip(deployed_id_text)}'
+                    f'{meta_chip(serving_status_text)}'
                 )
                 if training and training.get("accuracy") is not None:
-                    endpoint_html += meta_chip("🎯", f"Accuracy {float(training.get('accuracy')):.2%}")
+                    endpoint_html += meta_chip(f"Accuracy {float(training.get('accuracy')):.2%}")
                 if training and training.get("status"):
-                    endpoint_html += meta_chip("📋", f"Training {training.get('status')}")
+                    endpoint_html += meta_chip(f"Training {training.get('status')}")
                 endpoint_html += "</div></div>"
             endpoint_html += "</div>"
             st.markdown(endpoint_html, unsafe_allow_html=True)

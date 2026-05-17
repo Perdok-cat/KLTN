@@ -8,20 +8,19 @@ from utils.gcp_auth import auth_headers
 
 MV_API_URL = os.getenv("MV_API_URL", "http://localhost:5001")
 
-st.set_page_config(page_title="Data Drift · ModelVision", page_icon="📊", layout="wide")
+st.set_page_config(page_title="Data Drift · ModelVision", layout="wide")
 
 with st.sidebar:
-    st.image("https://img.icons8.com/fluency/96/artificial-intelligence.png", width=80)
     st.title("ModelVision")
     st.divider()
-    st.page_link("app.py",               label="🏠 Tổng quan")
-    st.page_link("pages/1_HITL.py",      label="🛡️ HITL Review")
-    st.page_link("pages/2_Training.py",  label="📈 Training History")
-    st.page_link("pages/3_Drift.py",     label="📊 Data Drift")
-    st.page_link("pages/4_Models.py",    label="🤖 Model Management")
-    st.page_link("pages/5_LLM_Monitor.py", label="🧠 LLM Monitor")
+    st.page_link("app.py",               label="Tổng quan")
+    st.page_link("pages/1_HITL.py",      label="HITL Review")
+    st.page_link("pages/2_Training.py",  label="Training History")
+    st.page_link("pages/3_Drift.py",     label="Data Drift")
+    st.page_link("pages/4_Models.py",    label="Model Management")
+    st.page_link("pages/5_LLM_Monitor.py", label="LLM Monitor")
 
-st.title("📊 Data Drift")
+st.title("Data Drift")
 st.caption("Phân tích chi tiết phân phối nhãn giữa dữ liệu gốc, HITL staging và inference 7 ngày gần đây")
 st.divider()
 
@@ -93,7 +92,7 @@ def drift_color(value: float) -> str:
 
 refresh_col, status_col = st.columns([1, 5])
 with refresh_col:
-    if st.button("🔄 Làm mới"):
+    if st.button("Làm mới"):
         st.cache_data.clear()
         st.rerun()
 with status_col:
@@ -143,15 +142,15 @@ strong_labels = [row for row in rows if abs(row["Drift điểm %"]) > 10]
 max_row = max(rows, key=lambda row: abs(row["Drift điểm %"]))
 
 k1, k2, k3, k4, k5 = st.columns(5)
-k1.metric("📦 Original", f"{total_orig:,}")
-k2.metric("🔖 HITL staging", f"{total_hitl:,}")
-k3.metric("🕐 Inference 7d", f"{total_recent:,}")
-k4.metric("⚠️ Nhãn cần theo dõi", f"{len(risky_labels)}", delta=f"{len(strong_labels)} lệch mạnh")
-k5.metric("📌 Lệch lớn nhất", max_row["Nhãn"], delta=f"{max_row['Drift điểm %']:+.1f} điểm %")
+k1.metric("Original", f"{total_orig:,}")
+k2.metric("HITL staging", f"{total_hitl:,}")
+k3.metric("Inference 7d", f"{total_recent:,}")
+k4.metric("Nhãn cần theo dõi", f"{len(risky_labels)}", delta=f"{len(strong_labels)} lệch mạnh")
+k5.metric("Lệch lớn nhất", max_row["Nhãn"], delta=f"{max_row['Drift điểm %']:+.1f} điểm %")
 
 st.divider()
 
-st.subheader("📊 So sánh tỷ lệ nhãn")
+st.subheader("So sánh tỷ lệ nhãn")
 labels_vi = [LABEL_VI.get(label, label) for label in labels]
 
 fig = go.Figure()
@@ -185,7 +184,7 @@ st.plotly_chart(fig, use_container_width=True)
 left, right = st.columns([1.1, 1])
 
 with left:
-    st.subheader("⚡ Mức lệch HITL so với Original")
+    st.subheader("Mức lệch HITL so với Original")
     sorted_rows = sorted(rows, key=lambda row: abs(row["Drift điểm %"]), reverse=True)
     delta_fig = go.Figure()
     delta_fig.add_trace(go.Bar(
@@ -209,7 +208,7 @@ with left:
     st.plotly_chart(delta_fig, use_container_width=True)
 
 with right:
-    st.subheader("🌡️ Heatmap phân phối")
+    st.subheader("Heatmap phân phối")
     heatmap_values = [
         [pct(orig_dist, label) for label in labels],
         [pct(hitl_dist, label) for label in labels],
@@ -239,7 +238,7 @@ with right:
 
 st.divider()
 
-st.subheader("📋 Bảng phân tích chi tiết theo nhãn")
+st.subheader("Bảng phân tích chi tiết theo nhãn")
 st.dataframe(
     rows,
     use_container_width=True,

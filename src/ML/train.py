@@ -5,14 +5,17 @@ import time
 import os
 from datetime import datetime
 from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.svm import LinearSVC
-from sklearn.linear_model import LogisticRegression
-from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import LabelEncoder
 from sklearn.metrics import classification_report, accuracy_score
 
-LOG_DIR = "src/ML/Training"
+from model_registry import (
+    TFIDF_FILENAME,
+    TRAINING_DIR,
+    build_models,
+    model_artifact_path,
+)
+
+LOG_DIR = TRAINING_DIR
 os.makedirs(LOG_DIR, exist_ok=True)
 
 log_path = os.path.join(LOG_DIR, f"train_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
@@ -50,11 +53,7 @@ X_test_vec  = tfidf.transform(X_test)
 logger.info(f"TF-IDF done in {time.time() - t0:.2f}s | Vocab size: {len(tfidf.vocabulary_)}")
 
 # --- Train nhiều mô hình ---
-models = {
-    "LinearSVC":          LinearSVC(max_iter=2000, random_state=42),
-    "LogisticRegression": LogisticRegression(max_iter=1000, random_state=42),
-    "RandomForest":       RandomForestClassifier(n_estimators=200, random_state=42),
-}
+models = build_models()
 
 results = {}
 
@@ -72,12 +71,12 @@ for name, model in models.items():
     logger.info(f"[{name}] Done in {elapsed:.2f}s | Accuracy: {acc:.4f}")
     logger.info(f"[{name}] Classification Report:\n{report}")
 
-    model_path = os.path.join(LOG_DIR, f"{name}.joblib")
+    model_path = model_artifact_path(name)
     joblib.dump(model, model_path)
     logger.info(f"[{name}] Model saved -> {model_path}")
 
 # --- Lưu vectorizer ---
-vec_path = os.path.join(LOG_DIR, "tfidf_vectorizer.joblib")
+vec_path = os.path.join(LOG_DIR, TFIDF_FILENAME)
 joblib.dump(tfidf, vec_path)
 logger.info(f"Vectorizer saved -> {vec_path}")
 

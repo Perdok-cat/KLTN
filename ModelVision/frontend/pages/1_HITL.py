@@ -13,7 +13,6 @@ MV_API_URL = os.getenv("MV_API_URL", "http://localhost:5001")
 
 st.set_page_config(
     page_title="HITL Review · ModelVision",
-    page_icon="🛡️",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
@@ -34,7 +33,6 @@ LABEL_ORDER = ["MARKET SIGNALS", "SOLUTIONS & USE CASES", "DEEP DIVE", "NOISE"]
 ALL_LABELS  = ["DEEP DIVE", "MARKET SIGNALS", "NOISE", "SOLUTIONS & USE CASES"]
 CONF_NUM    = {"low": 0.20, "medium": 0.55, "high": 0.90}
 CONF_COLOR  = {"low": "#E74C3C", "medium": "#F39C12", "high": "#27AE60"}
-CONF_ICON   = {"low": "🔴", "medium": "🟡", "high": "🟢"}
 
 st.markdown("""
 <style>
@@ -61,7 +59,6 @@ if not st.session_state.get("mv_authenticated"):
     with center:
         st.markdown("""
         <div style="text-align:center;padding:8px 0 24px">
-            <div style="font-size:3.5rem">🛡️</div>
             <h2 style="margin:8px 0 4px">ModelVision – HITL Review</h2>
             <p style="color:#888;margin:0">Khu vực nội bộ · Yêu cầu xác thực</p>
         </div>
@@ -69,14 +66,14 @@ if not st.session_state.get("mv_authenticated"):
         with st.form("mv_login_form"):
             username  = st.text_input("Tên đăng nhập", placeholder="admin")
             password  = st.text_input("Mật khẩu", type="password")
-            submitted = st.form_submit_button("🔐 Đăng nhập", use_container_width=True, type="primary")
+            submitted = st.form_submit_button("Đăng nhập", use_container_width=True, type="primary")
         if submitted:
             if username == ADMIN_USERNAME and password == ADMIN_PASSWORD:
                 st.session_state["mv_authenticated"] = True
                 st.session_state["mv_user"]          = username
                 st.rerun()
             else:
-                st.error("Sai tên đăng nhập hoặc mật khẩu.", icon="🚫")
+                st.error("Sai tên đăng nhập hoặc mật khẩu.")
     st.stop()
 
 # ── Session defaults ───────────────────────────────────────────────────────────
@@ -86,20 +83,19 @@ for k, v in {"hitl_page": 1, "hitl_actioned": set(), "hitl_cache": None, "main_c
 
 # ── Sidebar ────────────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.image("https://img.icons8.com/fluency/96/artificial-intelligence.png", width=80)
     st.title("ModelVision")
-    st.caption(f"👤 {st.session_state.get('mv_user', 'Admin')}")
+    st.caption(st.session_state.get("mv_user", "Admin"))
     st.divider()
-    st.page_link("app.py",               label="🏠 Tổng quan")
-    st.page_link("pages/1_HITL.py",      label="🛡️ HITL Review")
-    st.page_link("pages/2_Training.py",  label="📈 Training History")
-    st.page_link("pages/3_Drift.py",     label="📊 Data Drift")
-    st.page_link("pages/4_Models.py",    label="🤖 Model Management")
-    st.page_link("pages/5_LLM_Monitor.py", label="🧠 LLM Monitor")
+    st.page_link("app.py",               label="Tổng quan")
+    st.page_link("pages/1_HITL.py",      label="HITL Review")
+    st.page_link("pages/2_Training.py",  label="Training History")
+    st.page_link("pages/3_Drift.py",     label="Data Drift")
+    st.page_link("pages/4_Models.py",    label="Model Management")
+    st.page_link("pages/5_LLM_Monitor.py", label="LLM Monitor")
     st.divider()
     page_size = st.select_slider("Bài/trang", options=[5, 10, 20], value=10)
     st.divider()
-    if st.button("🚪 Đăng xuất", use_container_width=True):
+    if st.button("Đăng xuất", use_container_width=True):
         st.session_state["mv_authenticated"] = False
         st.rerun()
 
@@ -144,13 +140,12 @@ def progress_bar_html(conf_raw: str | None) -> str:
     val   = conf_to_float(conf_raw)
     key   = str(conf_raw or "").lower()
     color = CONF_COLOR.get(key, "#F39C12")
-    icon  = CONF_ICON.get(key, "🟡")
     pct   = val * 100
     return f"""
     <div style="margin:6px 0 10px">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
             <span style="font-size:0.75rem;color:#555">Độ tin cậy AI:</span>
-            <span style="font-size:0.75rem;font-weight:700;color:{color}">{icon} {str(conf_raw or "—").upper()}</span>
+            <span style="font-size:0.75rem;font-weight:700;color:{color}">{str(conf_raw or "—").upper()}</span>
         </div>
         <div style="background:#e9ecef;border-radius:6px;height:8px;overflow:hidden">
             <div style="width:{pct:.0f}%;background:{color};height:100%;border-radius:6px"></div>
@@ -158,7 +153,7 @@ def progress_bar_html(conf_raw: str | None) -> str:
     </div>"""
 
 # ── Page header ────────────────────────────────────────────────────────────────
-st.title("🛡️ HITL Review")
+st.title("HITL Review")
 
 try:
     hitl = fetch_hitl_stats()
@@ -176,7 +171,7 @@ reviewed_all   = approved_total + rejected_total
 noise_ratio    = rejected_total / reviewed_all * 100 if reviewed_all else 0.0
 coverage_pct   = reviewed_all / total_articles * 100 if total_articles else 0.0
 
-tab_overview, tab_queue = st.tabs(["📊 Tổng quan", "📋 Hàng chờ duyệt"])
+tab_overview, tab_queue = st.tabs(["Tổng quan", "Hàng chờ duyệt"])
 
 # ════════════════════════════════════════════════
 # TAB 1 – TỔNG QUAN
@@ -184,11 +179,11 @@ tab_overview, tab_queue = st.tabs(["📊 Tổng quan", "📋 Hàng chờ duyệt
 with tab_overview:
     st.divider()
     m1, m2, m3, m4, m5 = st.columns(5)
-    m1.metric("⏳ Chờ duyệt",         f"{pending_count:,}")
-    m2.metric("✅ Đã duyệt hôm nay",  f"{reviewed_today:,}")
-    m3.metric("🗑️ Tỉ lệ Nhiễu",       f"{noise_ratio:.1f}%")
-    m4.metric("👍 Tổng Approved",     f"{approved_total:,}")
-    m5.metric("📰 Tổng bài viết",     f"{total_articles:,}")
+    m1.metric("Chờ duyệt",         f"{pending_count:,}")
+    m2.metric("Đã duyệt hôm nay",  f"{reviewed_today:,}")
+    m3.metric("Tỉ lệ Nhiễu",       f"{noise_ratio:.1f}%")
+    m4.metric("Tổng Approved",     f"{approved_total:,}")
+    m5.metric("Tổng bài viết",     f"{total_articles:,}")
     st.divider()
 
     gc, rc, lc = st.columns(3)
@@ -217,7 +212,7 @@ with tab_overview:
     with rc:
         st.subheader("Trạng thái duyệt")
         fig = go.Figure(go.Pie(
-            labels=["⏳ Chờ duyệt", "✅ Approved", "🗑️ Rejected"],
+            labels=["Chờ duyệt", "Approved", "Rejected"],
             values=[pending_count, approved_total, rejected_total],
             marker_colors=["#95A5A6", "#27AE60", "#E74C3C"],
             hole=0.52, textinfo="percent+value",
@@ -243,7 +238,7 @@ with tab_overview:
         st.caption(f"Đã duyệt **{reviewed_today:,}** / {pending_count:,} bài chờ")
 
     st.divider()
-    st.caption(f"🛡️ HITL Review · ModelVision · KLTN 2026  |  Tổng bài: **{total_articles:,}**")
+    st.caption(f"HITL Review · ModelVision · KLTN 2026  |  Tổng bài: **{total_articles:,}**")
 
 # ════════════════════════════════════════════════
 # TAB 2 – HÀNG CHỜ DUYỆT
@@ -265,9 +260,9 @@ with tab_queue:
 
     hdr_c, ref_c = st.columns([7, 1])
     with hdr_c:
-        st.subheader(f"📋 Hàng chờ duyệt · {total_pending:,} bài · Trang {cur_page}/{total_pages}")
+        st.subheader(f"Hàng chờ duyệt · {total_pending:,} bài · Trang {cur_page}/{total_pages}")
     with ref_c:
-        if st.button("🔄 Làm mới", use_container_width=True):
+        if st.button("Làm mới", use_container_width=True):
             st.session_state["hitl_actioned"] = set()
             st.session_state["hitl_page"]     = 1
             st.cache_data.clear()
@@ -275,7 +270,7 @@ with tab_queue:
 
     if not visible:
         if total_pending == 0:
-            st.success("🎉 Không còn bài nào chờ duyệt.")
+            st.success("Không còn bài nào chờ duyệt.")
         else:
             st.info("Tất cả bài trang này đã xử lý. Nhấn **Trang sau** hoặc **Làm mới**.")
 
@@ -295,9 +290,9 @@ with tab_queue:
                     st.markdown(f"#### {title}")
                 parts = [label_badge(ai_label)]
                 if art.get("source"):
-                    parts.append(f'<span style="color:#888;font-size:0.78rem;margin-left:8px">🌐 {art["source"]}</span>')
+                    parts.append(f'<span style="color:#888;font-size:0.78rem;margin-left:8px">{art["source"]}</span>')
                 if art.get("pub_date"):
-                    parts.append(f'<span style="color:#aaa;font-size:0.73rem;margin-left:8px">📅 {str(art["pub_date"])[:16]}</span>')
+                    parts.append(f'<span style="color:#aaa;font-size:0.73rem;margin-left:8px">{str(art["pub_date"])[:16]}</span>')
                 st.markdown(" ".join(parts), unsafe_allow_html=True)
                 if art.get("content_snippet"):
                     st.caption(art["content_snippet"][:220])
@@ -305,24 +300,24 @@ with tab_queue:
 
             with right_col:
                 st.markdown("**Hành động:**")
-                if st.button("✅ Approve", key=f"a_{article_id}", type="primary", use_container_width=True):
+                if st.button("Approve", key=f"a_{article_id}", type="primary", use_container_width=True):
                     with st.spinner("Đang ghi nhận…"):
                         try:
                             post_review(article_id, "Accept")
                             st.session_state["hitl_actioned"].add(article_id)
                             fetch_pending.clear()
-                            st.toast(f"✅ Approved: {title[:45]}…", icon="✅")
+                            st.toast(f"Approved: {title[:45]}...")
                             st.rerun()
                         except Exception as exc:
                             st.error(f"Lỗi: {exc}")
 
-                if st.button("🗑️ Reject as Noise", key=f"r_{article_id}", use_container_width=True):
+                if st.button("Reject as Noise", key=f"r_{article_id}", use_container_width=True):
                     with st.spinner("Đang ghi nhận…"):
                         try:
                             post_review(article_id, "Reject")
                             st.session_state["hitl_actioned"].add(article_id)
                             fetch_pending.clear()
-                            st.toast(f"🗑️ Rejected: {title[:45]}…", icon="🗑️")
+                            st.toast(f"Rejected: {title[:45]}...")
                             st.rerun()
                         except Exception as exc:
                             st.error(f"Lỗi: {exc}")
@@ -336,13 +331,13 @@ with tab_queue:
                     key=f"s_{article_id}",
                     label_visibility="collapsed",
                 )
-                if st.button("💾 Lưu nhãn mới", key=f"c_{article_id}", use_container_width=True):
+                if st.button("Lưu nhãn mới", key=f"c_{article_id}", use_container_width=True):
                     with st.spinner("Đang ghi nhận…"):
                         try:
                             post_review(article_id, "Correct", corrected_label=corrected)
                             st.session_state["hitl_actioned"].add(article_id)
                             fetch_pending.clear()
-                            st.toast(f"✏️ Sửa → {LABEL_VI.get(corrected, corrected)}: {title[:35]}…", icon="✏️")
+                            st.toast(f"Sửa -> {LABEL_VI.get(corrected, corrected)}: {title[:35]}...")
                             st.rerun()
                         except Exception as exc:
                             st.error(f"Lỗi: {exc}")
@@ -350,7 +345,7 @@ with tab_queue:
     st.divider()
     pg_prev, pg_info, pg_next = st.columns([1, 2, 1])
     with pg_prev:
-        if st.button("⬅ Trang trước", disabled=cur_page <= 1, use_container_width=True):
+        if st.button("Trang trước", disabled=cur_page <= 1, use_container_width=True):
             st.session_state["hitl_page"]     = cur_page - 1
             st.session_state["hitl_actioned"] = set()
             st.rerun()
@@ -361,7 +356,7 @@ with tab_queue:
             unsafe_allow_html=True,
         )
     with pg_next:
-        if st.button("Trang sau ➡", disabled=cur_page >= total_pages, use_container_width=True):
+        if st.button("Trang sau", disabled=cur_page >= total_pages, use_container_width=True):
             st.session_state["hitl_page"]     = cur_page + 1
             st.session_state["hitl_actioned"] = set()
             st.rerun()

@@ -1,0 +1,208 @@
+2026-05-16 23:38:36 | INFO | Loading data...
+2026-05-16 23:38:36 | INFO | Total samples: 1038 | Classes: [np.int64(0), np.int64(1), np.int64(2), np.int64(3)]
+2026-05-16 23:38:36 | INFO | Label distribution:
+label
+MARKET SIGNALS           275
+NOISE                    275
+DEEP DIVE                257
+SOLUTIONS & USE CASES    231
+2026-05-16 23:38:36 | INFO | Train: 830 | Test: 208
+2026-05-16 23:38:36 | INFO | Fitting TF-IDF vectorizer (ngram 1-2, max_features=30000)...
+2026-05-16 23:38:38 | INFO | TF-IDF done in 1.87s | Vocab size: 30000
+2026-05-16 23:38:38 | INFO | [LinearSVC] Training started...
+2026-05-16 23:38:38 | INFO | [LinearSVC] Done in 0.12s | Accuracy: 0.8510
+2026-05-16 23:38:38 | INFO | [LinearSVC] Classification Report:
+              precision    recall  f1-score   support
+
+           0       0.98      0.96      0.97        52
+           1       0.71      0.91      0.80        55
+           2       0.96      0.78      0.86        55
+           3       0.81      0.74      0.77        46
+
+    accuracy                           0.85       208
+   macro avg       0.86      0.85      0.85       208
+weighted avg       0.87      0.85      0.85       208
+
+2026-05-16 23:38:38 | INFO | [LinearSVC] Model saved -> src/ML/Training/LinearSVC.joblib
+2026-05-16 23:38:38 | INFO | [LogisticRegression] Training started...
+2026-05-16 23:38:42 | INFO | [LogisticRegression] Done in 4.27s | Accuracy: 0.8173
+2026-05-16 23:38:42 | INFO | [LogisticRegression] Classification Report:
+              precision    recall  f1-score   support
+
+           0       0.98      0.92      0.95        52
+           1       0.66      0.89      0.76        55
+           2       0.93      0.73      0.82        55
+           3       0.79      0.72      0.75        46
+
+    accuracy                           0.82       208
+   macro avg       0.84      0.81      0.82       208
+weighted avg       0.84      0.82      0.82       208
+
+2026-05-16 23:38:42 | INFO | [LogisticRegression] Model saved -> src/ML/Training/LogisticRegression.joblib
+2026-05-16 23:38:42 | INFO | [RandomForest] Training started...
+2026-05-16 23:38:45 | INFO | [RandomForest] Done in 2.32s | Accuracy: 0.7981
+2026-05-16 23:38:45 | INFO | [RandomForest] Classification Report:
+              precision    recall  f1-score   support
+
+           0       0.98      0.90      0.94        52
+           1       0.63      0.93      0.75        55
+           2       0.90      0.69      0.78        55
+           3       0.81      0.65      0.72        46
+
+    accuracy                           0.80       208
+   macro avg       0.83      0.79      0.80       208
+weighted avg       0.83      0.80      0.80       208
+
+2026-05-16 23:38:45 | INFO | [RandomForest] Model saved -> src/ML/Training/RandomForest.joblib
+2026-05-16 23:38:45 | INFO | [MultinomialNB] Training started...
+2026-05-16 23:38:45 | INFO | [MultinomialNB] Done in 0.01s | Accuracy: 0.7692
+2026-05-16 23:38:45 | INFO | [MultinomialNB] Classification Report:
+              precision    recall  f1-score   support
+
+           0       0.92      0.92      0.92        52
+           1       0.60      0.95      0.73        55
+           2       0.94      0.56      0.70        55
+           3       0.81      0.63      0.71        46
+
+    accuracy                           0.77       208
+   macro avg       0.82      0.77      0.77       208
+weighted avg       0.82      0.77      0.77       208
+
+2026-05-16 23:38:45 | INFO | [MultinomialNB] Model saved -> src/ML/Training/MultinomialNB.joblib
+2026-05-16 23:38:45 | INFO | [ComplementNB] Training started...
+2026-05-16 23:38:45 | INFO | [ComplementNB] Done in 0.01s | Accuracy: 0.7692
+2026-05-16 23:38:45 | INFO | [ComplementNB] Classification Report:
+              precision    recall  f1-score   support
+
+           0       0.92      0.92      0.92        52
+           1       0.61      0.93      0.73        55
+           2       0.94      0.56      0.70        55
+           3       0.77      0.65      0.71        46
+
+    accuracy                           0.77       208
+   macro avg       0.81      0.77      0.77       208
+weighted avg       0.81      0.77      0.77       208
+
+2026-05-16 23:38:45 | INFO | [ComplementNB] Model saved -> src/ML/Training/ComplementNB.joblib
+2026-05-16 23:38:45 | INFO | [BernoulliNB] Training started...
+2026-05-16 23:38:45 | INFO | [BernoulliNB] Done in 0.01s | Accuracy: 0.7644
+2026-05-16 23:38:45 | INFO | [BernoulliNB] Classification Report:
+              precision    recall  f1-score   support
+
+           0       0.96      0.88      0.92        52
+           1       0.69      0.75      0.72        55
+           2       0.67      0.87      0.76        55
+           3       0.83      0.52      0.64        46
+
+    accuracy                           0.76       208
+   macro avg       0.79      0.76      0.76       208
+weighted avg       0.78      0.76      0.76       208
+
+2026-05-16 23:38:45 | INFO | [BernoulliNB] Model saved -> src/ML/Training/BernoulliNB.joblib
+2026-05-16 23:38:45 | INFO | [RidgeClassifier] Training started...
+2026-05-16 23:38:45 | INFO | [RidgeClassifier] Done in 0.27s | Accuracy: 0.8413
+2026-05-16 23:38:45 | INFO | [RidgeClassifier] Classification Report:
+              precision    recall  f1-score   support
+
+           0       0.98      0.92      0.95        52
+           1       0.70      0.91      0.79        55
+           2       0.96      0.78      0.86        55
+           3       0.79      0.74      0.76        46
+
+    accuracy                           0.84       208
+   macro avg       0.86      0.84      0.84       208
+weighted avg       0.86      0.84      0.84       208
+
+2026-05-16 23:38:45 | INFO | [RidgeClassifier] Model saved -> src/ML/Training/RidgeClassifier.joblib
+2026-05-16 23:38:45 | INFO | [SGDClassifier_Hinge] Training started...
+2026-05-16 23:38:45 | INFO | [SGDClassifier_Hinge] Done in 0.15s | Accuracy: 0.8462
+2026-05-16 23:38:45 | INFO | [SGDClassifier_Hinge] Classification Report:
+              precision    recall  f1-score   support
+
+           0       0.96      0.96      0.96        52
+           1       0.72      0.93      0.81        55
+           2       0.96      0.78      0.86        55
+           3       0.80      0.70      0.74        46
+
+    accuracy                           0.85       208
+   macro avg       0.86      0.84      0.84       208
+weighted avg       0.86      0.85      0.85       208
+
+2026-05-16 23:38:45 | INFO | [SGDClassifier_Hinge] Model saved -> src/ML/Training/SGDClassifier_Hinge.joblib
+2026-05-16 23:38:45 | INFO | [SGDClassifier_LogLoss] Training started...
+2026-05-16 23:38:45 | INFO | [SGDClassifier_LogLoss] Done in 0.10s | Accuracy: 0.8413
+2026-05-16 23:38:45 | INFO | [SGDClassifier_LogLoss] Classification Report:
+              precision    recall  f1-score   support
+
+           0       0.98      0.96      0.97        52
+           1       0.70      0.91      0.79        55
+           2       0.95      0.75      0.84        55
+           3       0.79      0.74      0.76        46
+
+    accuracy                           0.84       208
+   macro avg       0.86      0.84      0.84       208
+weighted avg       0.86      0.84      0.84       208
+
+2026-05-16 23:38:45 | INFO | [SGDClassifier_LogLoss] Model saved -> src/ML/Training/SGDClassifier_LogLoss.joblib
+2026-05-16 23:38:45 | INFO | [PassiveAggressive] Training started...
+2026-05-16 23:38:46 | INFO | [PassiveAggressive] Done in 0.13s | Accuracy: 0.8462
+2026-05-16 23:38:46 | INFO | [PassiveAggressive] Classification Report:
+              precision    recall  f1-score   support
+
+           0       0.98      0.96      0.97        52
+           1       0.72      0.91      0.81        55
+           2       0.95      0.75      0.84        55
+           3       0.78      0.76      0.77        46
+
+    accuracy                           0.85       208
+   macro avg       0.86      0.84      0.85       208
+weighted avg       0.86      0.85      0.85       208
+
+2026-05-16 23:38:46 | INFO | [PassiveAggressive] Model saved -> src/ML/Training/PassiveAggressive.joblib
+2026-05-16 23:38:46 | INFO | [Perceptron] Training started...
+2026-05-16 23:38:46 | INFO | [Perceptron] Done in 0.04s | Accuracy: 0.8413
+2026-05-16 23:38:46 | INFO | [Perceptron] Classification Report:
+              precision    recall  f1-score   support
+
+           0       0.91      0.96      0.93        52
+           1       0.75      0.89      0.82        55
+           2       0.95      0.76      0.85        55
+           3       0.77      0.74      0.76        46
+
+    accuracy                           0.84       208
+   macro avg       0.85      0.84      0.84       208
+weighted avg       0.85      0.84      0.84       208
+
+2026-05-16 23:38:46 | INFO | [Perceptron] Model saved -> src/ML/Training/Perceptron.joblib
+2026-05-16 23:38:46 | INFO | [ExtraTrees] Training started...
+2026-05-16 23:38:46 | INFO | [ExtraTrees] Done in 0.72s | Accuracy: 0.7837
+2026-05-16 23:38:46 | INFO | [ExtraTrees] Classification Report:
+              precision    recall  f1-score   support
+
+           0       0.96      0.90      0.93        52
+           1       0.61      0.91      0.73        55
+           2       0.90      0.65      0.76        55
+           3       0.81      0.65      0.72        46
+
+    accuracy                           0.78       208
+   macro avg       0.82      0.78      0.79       208
+weighted avg       0.82      0.78      0.79       208
+
+2026-05-16 23:38:47 | INFO | [ExtraTrees] Model saved -> src/ML/Training/ExtraTrees.joblib
+2026-05-16 23:38:47 | INFO | Vectorizer saved -> src/ML/Training/tfidf_vectorizer.joblib
+2026-05-16 23:38:47 | INFO | ==================================================
+2026-05-16 23:38:47 | INFO | SUMMARY
+2026-05-16 23:38:47 | INFO |   LinearSVC                 Accuracy: 0.8510
+2026-05-16 23:38:47 | INFO |   SGDClassifier_Hinge       Accuracy: 0.8462
+2026-05-16 23:38:47 | INFO |   PassiveAggressive         Accuracy: 0.8462
+2026-05-16 23:38:47 | INFO |   RidgeClassifier           Accuracy: 0.8413
+2026-05-16 23:38:47 | INFO |   SGDClassifier_LogLoss     Accuracy: 0.8413
+2026-05-16 23:38:47 | INFO |   Perceptron                Accuracy: 0.8413
+2026-05-16 23:38:47 | INFO |   LogisticRegression        Accuracy: 0.8173
+2026-05-16 23:38:47 | INFO |   RandomForest              Accuracy: 0.7981
+2026-05-16 23:38:47 | INFO |   ExtraTrees                Accuracy: 0.7837
+2026-05-16 23:38:47 | INFO |   MultinomialNB             Accuracy: 0.7692
+2026-05-16 23:38:47 | INFO |   ComplementNB              Accuracy: 0.7692
+2026-05-16 23:38:47 | INFO |   BernoulliNB               Accuracy: 0.7644
+2026-05-16 23:38:47 | INFO | Log saved -> src/ML/Training/train_20260516_233836.log
+2026-05-16 23:38:47 | INFO | ==================================================

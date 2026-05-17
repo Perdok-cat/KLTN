@@ -5,8 +5,16 @@ import unicodedata
 import os
 from underthesea import word_tokenize
 from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
+
+os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
 import seaborn as sns
 import matplotlib.pyplot as plt
+
+from model_registry import (
+    build_models,
+    resolve_model_artifact_path,
+    resolve_tfidf_artifact_path,
+)
 
 RESULT_DIR = "src/ML/Result"
 os.makedirs(RESULT_DIR, exist_ok=True)
@@ -16,12 +24,7 @@ def log(msg: str = ""):
 
 # ── Config ────────────────────────────────────────────────────────────────────
 DATA_PATH  = "/home/binperdok/KLTN2026/Data/Test.csv"
-TFIDF_PATH = "src/ML/Training/tfidf_vectorizer.pkl"
-MODELS = {
-    "LinearSVC":          "src/ML/Training/LinearSVC.pkl",
-    "LogisticRegression": "src/ML/Training/LogisticRegression.pkl",
-    "RandomForest":       "src/ML/Training/RandomForest.pkl",
-}
+MODEL_NAMES = list(build_models().keys())
 LABEL_MAP = {
     0: "DEEP DIVE",
     1: "MARKET SIGNALS",
@@ -67,31 +70,48 @@ log(f"Preprocessing done. Sample text_tok:\n  {df['text_tok'].iloc[0][:200]}")
 
 # ── Load TF-IDF ───────────────────────────────────────────────────────────────
 log("\nLoading TF-IDF vectorizer...")
-tfidf = joblib.load(TFIDF_PATH)
+tfidf_path = resolve_tfidf_artifact_path()
+if tfidf_path is None:
+    raise FileNotFoundError(
+        "Cannot find TF-IDF vectorizer. Expected "
+        "src/ML/Training/tfidf_vectorizer.joblib or legacy .pkl"
+    )
+log(f"TF-IDF path: {tfidf_path}")
+tfidf = joblib.load(tfidf_path)
 X = tfidf.transform(df["text_tok"].fillna(""))
 log(f"Feature matrix shape: {X.shape}")
 
 if has_label:
     df["label_enc"] = df["label"].map(LABEL_ENC)
     y_true = df["label_enc"]
+    valid_label_mask = y_true.notna()
     log(f"\nLabel distribution:\n{df['label'].value_counts().to_string()}")
 
 # ── Inference từng model ──────────────────────────────────────────────────────
 results_summary = {}
+available_models = []
 
-for name, model_path in MODELS.items():
+for name in MODEL_NAMES:
+    model_path = resolve_model_artifact_path(name)
+    if model_path is None:
+        log(f"\n[{name}] Model artifact not found -> skipping")
+        continue
+
+    available_models.append(name)
     log(f"\n{'='*50}")
-    log(f"[{name}] Running inference...")
+    log(f"[{name}] Running inference from: {model_path}")
     model = joblib.load(model_path)
     preds = model.predict(X)
     df[f"pred_{name}"] = [LABEL_MAP.get(p, str(p)) for p in preds]
 
     if has_label:
-        acc = accuracy_score(y_true, preds)
-        present_labels = sorted(set(y_true))
+        y_eval = y_true[valid_label_mask].astype(int)
+        preds_eval = preds[valid_label_mask]
+        acc = accuracy_score(y_eval, preds_eval)
+        present_labels = sorted(set(y_eval) | set(preds_eval))
         present_names  = [LABEL_MAP[l] for l in present_labels]
         report = classification_report(
-            y_true, preds,
+            y_eval, preds_eval,
             labels=present_labels,
             target_names=present_names,
             zero_division=0,
@@ -100,7 +120,7 @@ for name, model_path in MODELS.items():
         log(f"[{name}] Accuracy: {acc:.4f}")
         log(f"[{name}] Classification Report:\n{report}")
 
-        cm = confusion_matrix(y_true, preds, labels=present_labels)
+        cm = confusion_matrix(y_eval, preds_eval, labels=present_labels)
         fig, ax = plt.subplots(figsize=(7, 5))
         sns.heatmap(
             cm, annot=True, fmt="d", cmap="Blues", ax=ax,
@@ -119,8 +139,8 @@ for name, model_path in MODELS.items():
         log(f"[{name}] No ground-truth label → skipping metrics")
 
 # ── Lưu kết quả suy luận ─────────────────────────────────────────────────────
-out_cols = ["title", "label"] + [f"pred_{n}" for n in MODELS] if has_label \
-           else ["title"] + [f"pred_{n}" for n in MODELS]
+out_cols = ["title", "label"] + [f"pred_{n}" for n in available_models] if has_label \
+           else ["title"] + [f"pred_{n}" for n in available_models]
 out_path = os.path.join(RESULT_DIR, "inference_result.csv")
 df[out_cols].to_csv(out_path, index=False)
 log(f"\nInference results saved -> {out_path}")

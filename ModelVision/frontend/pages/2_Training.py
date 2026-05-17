@@ -8,20 +8,19 @@ from utils.gcp_auth import auth_headers
 
 MV_API_URL = os.getenv("MV_API_URL", "http://localhost:5001")
 
-st.set_page_config(page_title="Training History · ModelVision", page_icon="📈", layout="wide")
+st.set_page_config(page_title="Training History · ModelVision", layout="wide")
 
 with st.sidebar:
-    st.image("https://img.icons8.com/fluency/96/artificial-intelligence.png", width=80)
     st.title("ModelVision")
     st.divider()
-    st.page_link("app.py",               label="🏠 Tổng quan")
-    st.page_link("pages/1_HITL.py",      label="🛡️ HITL Review")
-    st.page_link("pages/2_Training.py",  label="📈 Training History")
-    st.page_link("pages/3_Drift.py",     label="📊 Data Drift")
-    st.page_link("pages/4_Models.py",    label="🤖 Model Management")
-    st.page_link("pages/5_LLM_Monitor.py", label="🧠 LLM Monitor")
+    st.page_link("app.py",               label="Tổng quan")
+    st.page_link("pages/1_HITL.py",      label="HITL Review")
+    st.page_link("pages/2_Training.py",  label="Training History")
+    st.page_link("pages/3_Drift.py",     label="Data Drift")
+    st.page_link("pages/4_Models.py",    label="Model Management")
+    st.page_link("pages/5_LLM_Monitor.py", label="LLM Monitor")
 
-st.title("📈 Training History")
+st.title("Training History")
 st.divider()
 
 STATUS_COLOR = {
@@ -56,15 +55,15 @@ completed = [h for h in history if h["status"] == "COMPLETED"]
 latest    = history[0]
 
 m1, m2, m3, m4 = st.columns(4)
-m1.metric("📋 Tổng số lần training", len(history))
-m2.metric("✅ Thành công",           len(completed))
+m1.metric("Tổng số lần training", len(history))
+m2.metric("Thành công",           len(completed))
 
 best_acc = max((h["accuracy"] for h in completed if h.get("accuracy")), default=None)
-m3.metric("🎯 Accuracy cao nhất",    f"{best_acc:.2%}" if best_acc else "—")
+m3.metric("Accuracy cao nhất",    f"{best_acc:.2%}" if best_acc else "—")
 
 latest_acc = latest.get("accuracy")
 m4.metric(
-    "🕐 Lần cuối",
+    "Lần cuối",
     f"{latest_acc:.2%}" if latest_acc else latest.get("status", "—"),
 )
 
@@ -77,7 +76,7 @@ completed_sorted = sorted(
 )
 
 if completed_sorted:
-    st.subheader("📉 Accuracy theo thời gian")
+    st.subheader("Accuracy theo thời gian")
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=[h["triggered_at"][:10] for h in completed_sorted],
@@ -100,9 +99,9 @@ if completed_sorted:
     st.divider()
 
 # ── Trigger manual retrain ─────────────────────────────────────────────────────
-st.subheader("🚀 Trigger Training thủ công")
+st.subheader("Trigger Training thủ công")
 force = st.checkbox("Bỏ qua cooldown guard", value=False)
-if st.button("🚀 Trigger Retrain", type="primary"):
+if st.button("Trigger Retrain", type="primary"):
     with st.spinner("Đang gửi yêu cầu training…"):
         try:
             resp = requests.post(
@@ -122,7 +121,7 @@ if st.button("🚀 Trigger Retrain", type="primary"):
 st.divider()
 
 # ── Detail table ───────────────────────────────────────────────────────────────
-st.subheader("📋 Chi tiết các lần training")
+st.subheader("Chi tiết các lần training")
 for h in history:
     status  = h.get("status", "")
     color   = STATUS_COLOR.get(status, "#95A5A6")
