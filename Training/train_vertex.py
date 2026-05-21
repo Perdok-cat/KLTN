@@ -4,7 +4,7 @@ Vertex AI Custom Training Job – train_vertex.py
 Chiến lược: Data Flywheel + Sample Weight
   - Đọc dữ liệu gốc từ mlops_dataset.original_training_data  (weight = 1.0)
   - Đọc dữ liệu HITL từ mlops_dataset.hitl_staging_data       (weight = HITL_WEIGHT)
-  - Merge → TF-IDF + LinearSVC Pipeline → đánh giá
+  - Merge → TF-IDF + Calibrated LinearSVC Pipeline → đánh giá
   - Nếu accuracy >= MIN_ACCURACY: upload GCS → Vertex AI Model Registry → deploy Endpoint
   - Ghi kết quả vào mlops_dataset.training_metadata
 
@@ -37,6 +37,7 @@ from datetime import datetime, timezone
 import joblib
 import pandas as pd
 from google.cloud import aiplatform, bigquery, storage
+from sklearn.calibration import CalibratedClassifierCV
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, classification_report
@@ -127,7 +128,8 @@ def load_data(bq: bigquery.Client) -> pd.DataFrame:
 
 def train_and_evaluate(df: pd.DataFrame) -> tuple[Pipeline, str, float, str]:
     """
-    Train LinearSVC + LogisticRegression với sample weights, trả về best pipeline.
+    Train Calibrated LinearSVC + LogisticRegression với sample weights,
+    trả về best pipeline.
 
     Lý do dùng sample_weight qua Pipeline:
       - TF-IDF học vocabulary từ toàn bộ corpus (không cần weight ở bước này)
@@ -142,8 +144,21 @@ def train_and_evaluate(df: pd.DataFrame) -> tuple[Pipeline, str, float, str]:
     )
     logger.info("Train: %d | Test: %d", len(X_train), len(X_test))
 
+    min_class_count = int(y_train.value_counts().min())
+    calibration_cv = min(5, min_class_count)
+    if calibration_cv < 2:
+        raise ValueError(
+            "Không đủ mẫu mỗi lớp để calibrate LinearSVC "
+            f"(min_class_count={min_class_count}, cần ít nhất 2)"
+        )
+    logger.info("Calibrated LinearSVC cv=%d", calibration_cv)
+
     candidates = {
-        "LinearSVC": LinearSVC(max_iter=2000, random_state=42),
+        "CalibratedLinearSVC": CalibratedClassifierCV(
+            estimator=LinearSVC(max_iter=2000, random_state=42),
+            method="sigmoid",
+            cv=calibration_cv,
+        ),
         "LogisticRegression": LogisticRegression(max_iter=1000, random_state=42, n_jobs=-1),
     }
 
@@ -170,6 +185,7 @@ def train_and_evaluate(df: pd.DataFrame) -> tuple[Pipeline, str, float, str]:
         report = classification_report(y_test, preds)
 
         logger.info("[%s] %.2fs | Accuracy: %.4f", name, elapsed, acc)
+        logger.info("[%s] predict_proba available: %s", name, hasattr(pipe, "predict_proba"))
         logger.info("[%s] Classification Report:\n%s", name, report)
 
         if acc > best_acc:
@@ -177,6 +193,9 @@ def train_and_evaluate(df: pd.DataFrame) -> tuple[Pipeline, str, float, str]:
             best_name     = name
             best_pipeline = pipe
             best_report   = report
+
+    if best_pipeline is None or not hasattr(best_pipeline, "predict_proba"):
+        raise RuntimeError("Best pipeline không hỗ trợ predict_proba(); không deploy.")
 
     logger.info("Best model: %s | Accuracy: %.4f", best_name, best_acc)
     return best_pipeline, best_name, best_acc, best_report

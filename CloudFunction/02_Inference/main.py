@@ -6,6 +6,7 @@ import re
 import uuid
 import logging
 import unicodedata
+from math import isfinite
 from datetime import datetime, timezone
 
 from google.cloud import bigquery, aiplatform
@@ -40,6 +41,8 @@ LABEL_MAP: dict[int, str] = {
     2: "NOISE",
     3: "SOLUTIONS & USE CASES",
 }
+
+CONFIDENCE_LEVELS = {"low", "medium", "high"}
 
 # ---------------------------------------------------------------------------
 # Module-level singletons  (warm Cloud Function reuses these)
@@ -88,13 +91,131 @@ def build_feature_text(title: str, content: str) -> str:
 # Confidence scoring & Inference
 # ---------------------------------------------------------------------------
 
+def confidence_bucket(score: float | None) -> str:
+    """Convert calibrated probability to the UI/HITL confidence bucket."""
+    if score is None:
+        return "medium"
+    if score >= 0.75:
+        return "high"
+    if score >= 0.50:
+        return "medium"
+    return "low"
+
+
+def _to_float(value) -> float | None:
+    try:
+        score = float(value)
+    except (TypeError, ValueError):
+        return None
+    return score if isfinite(score) else None
+
+
+def _to_label(value) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        raw = value.strip()
+        if raw in LABEL_MAP.values():
+            return raw
+        if raw.isdigit():
+            return LABEL_MAP.get(int(raw))
+        return raw or None
+    if isinstance(value, (int, float)):
+        return LABEL_MAP.get(int(value))
+    return None
+
+
+def _first_present(mapping: dict, keys: tuple[str, ...]):
+    for key in keys:
+        if key in mapping and mapping[key] is not None:
+            return mapping[key]
+    return None
+
+
+def _first_numeric(mapping: dict, keys: tuple[str, ...]) -> float | None:
+    for key in keys:
+        if key not in mapping:
+            continue
+        score = _to_float(mapping[key])
+        if score is not None:
+            return score
+    return None
+
+
+def _score_from_mapping(probabilities: dict, label: str | None) -> float | None:
+    if label and label in probabilities:
+        return _to_float(probabilities[label])
+
+    numeric_scores = [_to_float(value) for value in probabilities.values()]
+    numeric_scores = [score for score in numeric_scores if score is not None]
+    return max(numeric_scores) if numeric_scores else None
+
+
+def _score_from_list(scores: list, label_id: int | None = None) -> tuple[str | None, float | None]:
+    numeric_scores = [_to_float(value) for value in scores]
+    if not numeric_scores or any(score is None for score in numeric_scores):
+        return None, None
+
+    if label_id is not None and 0 <= label_id < len(numeric_scores):
+        return LABEL_MAP.get(label_id), numeric_scores[label_id]
+
+    best_idx = max(range(len(numeric_scores)), key=lambda idx: numeric_scores[idx])
+    return LABEL_MAP.get(best_idx), numeric_scores[best_idx]
+
+
+def parse_vertex_prediction(prediction) -> tuple[str, float | None, str | None]:
+    """
+    Accept both legacy Vertex sklearn responses (class id only) and enriched
+    responses from a calibrated/custom serving path.
+    """
+    if isinstance(prediction, dict):
+        label_id_value = _first_present(
+            prediction,
+            ("label_id", "class_id", "prediction"),
+        )
+        label_id = int(label_id_value) if isinstance(label_id_value, (int, float)) else None
+        label = (
+            _to_label(prediction.get("label"))
+            or _to_label(prediction.get("predicted_label"))
+            or _to_label(label_id_value)
+        )
+
+        confidence_hint = str(prediction.get("confidence", "")).strip().lower()
+        confidence = confidence_hint if confidence_hint in CONFIDENCE_LEVELS else None
+
+        score = _first_numeric(
+            prediction,
+            ("confidence_score", "probability", "score", "confidence"),
+        )
+
+        probabilities = prediction.get("probabilities") or prediction.get("scores")
+        if score is None and isinstance(probabilities, dict):
+            score = _score_from_mapping(probabilities, label)
+        elif score is None and isinstance(probabilities, list):
+            scored_label, score = _score_from_list(probabilities, label_id)
+            label = label or scored_label
+
+        return label or "NOISE", score, confidence
+
+    if isinstance(prediction, list):
+        label, score = _score_from_list(prediction)
+        return label or "NOISE", score, None
+
+    return _to_label(prediction) or "NOISE", None, None
+
+
 def predict_single(title: str, content: str) -> dict:
     """
     Call Vertex AI Endpoint for inference.
-    Returns {"label", "confidence", "model_used"}.
+    Returns {"label", "confidence", "confidence_score", "model_used"}.
     """
     if not content or len(content.strip()) < 50:
-        return {"label": "NOISE", "confidence": "high", "model_used": "rule"}
+        return {
+            "label": "NOISE",
+            "confidence": "high",
+            "confidence_score": 1.0,
+            "model_used": "rule",
+        }
 
     endpoint = get_endpoint()
 
@@ -109,13 +230,15 @@ def predict_single(title: str, content: str) -> dict:
     response = endpoint.predict(instances=instances)
 
     # 4. Giải mã kết quả
-    pred = int(response.predictions[0])
-    label = LABEL_MAP.get(pred, "NOISE")
+    label, confidence_score, confidence_hint = parse_vertex_prediction(response.predictions[0])
+    confidence = confidence_hint or confidence_bucket(confidence_score)
 
-    # Điểm confidence tạm để mức mặc định với SVC qua Vertex API
-    confidence = "medium"
-
-    return {"label": label, "confidence": confidence, "model_used": _model_name}
+    return {
+        "label": label,
+        "confidence": confidence,
+        "confidence_score": confidence_score,
+        "model_used": _model_name,
+    }
 
 # ---------------------------------------------------------------------------
 # BigQuery helpers
@@ -144,11 +267,21 @@ def ensure_output_table(client: bigquery.Client) -> None:
         bigquery.SchemaField("crawl_date",  "TIMESTAMP", mode="NULLABLE"),
         bigquery.SchemaField("label",       "STRING",    mode="REQUIRED"),
         bigquery.SchemaField("confidence",  "STRING",    mode="NULLABLE"),
+        bigquery.SchemaField("confidence_score", "FLOAT64", mode="NULLABLE"),
         bigquery.SchemaField("model_used",  "STRING",    mode="NULLABLE"),
         bigquery.SchemaField("labeled_at",  "TIMESTAMP", mode="REQUIRED"),
     ]
     table_ref = bigquery.TableReference(dataset_ref, BQ_OUTPUT_TABLE)
     client.create_table(bigquery.Table(table_ref, schema=schema), exists_ok=True)
+
+    table = client.get_table(table_ref)
+    existing_fields = {field.name for field in table.schema}
+    if "confidence_score" not in existing_fields:
+        table.schema = list(table.schema) + [
+            bigquery.SchemaField("confidence_score", "FLOAT64", mode="NULLABLE")
+        ]
+        client.update_table(table, ["schema"])
+        logger.info("Added confidence_score column to %s.%s", BQ_DATASET, BQ_OUTPUT_TABLE)
 
 def fetch_unlabeled_articles(client: bigquery.Client) -> list[dict]:
     query = f"""
@@ -238,6 +371,7 @@ def run_inference(request):
             "crawl_date":  clean_crawl_date,
             "label":       label,
             "confidence":  result.get("confidence",  ""),
+            "confidence_score": result.get("confidence_score"),
             "model_used":  result.get("model_used",  ""),
             "labeled_at":  labeled_at_str,
         })
