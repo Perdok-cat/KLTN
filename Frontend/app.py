@@ -24,13 +24,13 @@ from ui import (  # noqa: E402
     LABEL_VI,
     apply_global_styles,
     article_meta_html,
+    clean_display_text,
     compact_number,
     escape_html,
     filter_request_params,
     format_datetime,
     hero_html,
     label_color,
-    label_icon,
     label_name,
     metric_card,
     neutral_chip,
@@ -47,7 +47,6 @@ API_URL = os.getenv("API_URL", "http://localhost:5000")
 
 st.set_page_config(
     page_title="Dashboard Tin tức AI",
-    page_icon="📰",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -186,19 +185,19 @@ if not ordered_labels:
     ordered_labels = ["Chưa có dữ liệu"]
 values_sorted = [int(label_dist.get(label, 0) or 0) for label in ordered_labels]
 colors_sorted = [label_color(label, label_colors) for label in ordered_labels] or ["#cbd5e1"]
-labels_vi = [f"{label_icon(label)} {LABEL_VI.get(label, label)}" for label in ordered_labels]
+labels_vi = [LABEL_VI.get(label, label) for label in ordered_labels]
 
 top_label, top_count = (sorted_labels[0] if sorted_labels else ("", 0))
 top_share = percent_text(top_count, total)
 
 hero_chips = [
-    neutral_chip(f"{compact_number(total)} bài viết", "📰", "slate"),
-    neutral_chip(date_label, "📅", "blue"),
+    neutral_chip(f"{compact_number(total)} bài viết", tone="slate"),
+    neutral_chip(date_label, tone="blue"),
 ]
 if params.get("source"):
-    hero_chips.append(neutral_chip(params["source"], "🌐", "green"))
+    hero_chips.append(neutral_chip(params["source"], tone="green"))
 if params.get("label"):
-    hero_chips.append(neutral_chip(label_name(params["label"]), label_icon(params["label"]), "amber"))
+    hero_chips.append(neutral_chip(label_name(params["label"]), tone="amber"))
 
 st.markdown(
     hero_html(
@@ -227,7 +226,7 @@ metric_specs = [
         compact_number(total),
         "Số bài phù hợp với bộ lọc hiện tại.",
         "#2563eb",
-        "📰",
+        "",
         total_delta,
         "Đếm tất cả bài viết sau khi áp dụng thời gian, nguồn và nhãn.",
         total_tone,
@@ -237,7 +236,7 @@ metric_specs = [
         label_name(top_label),
         f"{compact_number(top_count)} bài · {top_share}",
         label_color(top_label, label_colors),
-        label_icon(top_label),
+        "",
         top_delta,
         "Nhãn có số bài nhiều nhất trong tập dữ liệu đang lọc.",
         top_tone,
@@ -247,7 +246,7 @@ metric_specs = [
         compact_number(source_count),
         "Số nguồn có bài viết trong bộ lọc hiện tại.",
         "#0f766e",
-        "🌐",
+        "",
         source_delta,
         "Đếm số nguồn khác nhau có ít nhất một bài phù hợp.",
         source_tone,
@@ -257,7 +256,7 @@ metric_specs = [
         compact_number(recent_count),
         f"Số bài trong mốc {date_label.lower()}.",
         "#d97706",
-        "⚡",
+        "",
         recent_delta,
         "Đếm bài theo ngày đăng trong khoảng thời gian đang chọn.",
         recent_tone,
@@ -342,7 +341,7 @@ if sorted_labels:
     quick_cols = st.columns(min(4, len(sorted_labels)))
     for idx, (label, _) in enumerate(sorted_labels[:4]):
         with quick_cols[idx % len(quick_cols)]:
-            if st.button(f"{label_icon(label)} {label_name(label)}", key=f"label_filter_{label}", use_container_width=True):
+            if st.button(label_name(label), key=f"label_filter_{label}", use_container_width=True):
                 set_label_filter(label)
                 st.rerun()
 
@@ -359,6 +358,7 @@ if recent_articles:
     for idx, article in enumerate(recent_articles):
         article_id = str(article.get("id") or f"article_{idx}")
         preview = trim_text(article.get("summary") or article.get("snippet") or "", 220)
+        title = clean_display_text(article.get("title"), "Không có tiêu đề")
         row_cols = st.columns([5.5, 1.25])
         with row_cols[0]:
             st.markdown(
@@ -366,7 +366,7 @@ if recent_articles:
                 <div class="article-row">
                     <div>
                         {article_meta_html(article, label_colors)}
-                        <div class="article-row__title">{escape_html(article.get("title", "—"))}</div>
+                        <div class="article-row__title">{escape_html(title)}</div>
                         <div class="article-row__preview">{escape_html(preview or "Không có tóm tắt.")}</div>
                     </div>
                 </div>

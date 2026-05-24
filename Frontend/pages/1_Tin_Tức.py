@@ -19,15 +19,14 @@ from ui import (  # noqa: E402
     LABEL_COLORS,
     apply_global_styles,
     article_meta_html,
+    clean_display_text,
     compact_number,
-    confidence_chip,
     escape_html,
     filter_request_params,
     format_date,
     hero_html,
     keyword_chips,
     label_chip,
-    label_icon,
     label_name,
     neutral_chip,
     render_global_filter_bar,
@@ -41,7 +40,6 @@ API_URL = os.getenv("API_URL", "http://localhost:5000")
 
 st.set_page_config(
     page_title="Tin tức AI",
-    page_icon="📰",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -178,23 +176,24 @@ if st.session_state["view_article"] is not None:
         st.stop()
 
     label = str(article.get("label") or "")
-    confidence = str(article.get("confidence") or "")
-    summary = article.get("summary") or ""
-    key_points = article.get("key_points") or []
-    keywords = article.get("keywords") or ""
-    content = article.get("content") or ""
+    title = clean_display_text(article.get("title"), "Không có tiêu đề")
+    summary = clean_display_text(article.get("summary"))
+    raw_key_points = article.get("key_points") or []
+    key_points = [clean_display_text(point) for point in raw_key_points if clean_display_text(point)]
+    keywords = clean_display_text(article.get("keywords"))
+    content = clean_display_text(article.get("content"))
+    source = clean_display_text(article.get("source"), "Nguồn chưa có")
     pub_date_text = format_date(article.get("pub_date")) or "—"
 
     st.markdown(
         hero_html(
             "Bài viết chi tiết",
-            str(article.get("title", "—")),
+            title,
             "Tóm tắt, nguồn tin và nội dung đầy đủ trong cùng một màn hình đọc.",
             [
                 label_chip(label, LABEL_COLORS),
-                confidence_chip(confidence) if confidence else neutral_chip("Tin cậy chưa có", "●", "slate"),
-                neutral_chip(str(article.get("source") or "Nguồn chưa có"), "🌐", "slate"),
-                neutral_chip(format_date(article.get("pub_date")) or "Ngày chưa rõ", "📅", "slate"),
+                neutral_chip(source, tone="slate"),
+                neutral_chip(format_date(article.get("pub_date")) or "Ngày chưa rõ", tone="slate"),
             ],
         ),
         unsafe_allow_html=True,
@@ -227,14 +226,13 @@ if st.session_state["view_article"] is not None:
                     unsafe_allow_html=True,
                 )
             else:
-                st.info("Không có nội dung.")
+                st.info("Nội dung bài viết đang không hiển thị được hoặc chưa có dữ liệu.")
 
     with right_col:
         rail_chips = [
             label_chip(label, LABEL_COLORS),
-            confidence_chip(confidence) if confidence else neutral_chip("Tin cậy chưa có", "●", "slate"),
-            neutral_chip(str(article.get("source") or "Nguồn chưa có"), "🌐", "slate"),
-            neutral_chip(pub_date_text, "📅", "slate"),
+            neutral_chip(source, tone="slate"),
+            neutral_chip(pub_date_text, tone="slate"),
         ]
         rail_keywords = keyword_chips(keywords, limit=12) if keywords else '<div class="empty-state" style="padding:0.95rem 0.9rem;margin:0;background:#f8fafc;">Không có từ khóa.</div>'
         rail_link = (
@@ -248,8 +246,7 @@ if st.session_state["view_article"] is not None:
             '<div class="detail-rail__title">Tổng quan</div>'
             f'<div class="detail-rail__chips">{"".join(rail_chips)}</div>'
             f'<div class="info-row"><span>Nhãn</span><b>{escape_html(label_name(label))}</b></div>'
-            f'<div class="info-row"><span>Độ tin cậy</span><b>{escape_html(confidence or "—")}</b></div>'
-            f'<div class="info-row"><span>Nguồn</span><b>{escape_html(article.get("source") or "—")}</b></div>'
+            f'<div class="info-row"><span>Nguồn</span><b>{escape_html(source or "—")}</b></div>'
             '</div>'
             '<div class="detail-rail__section">'
             '<div class="detail-rail__title">Thời gian</div>'
@@ -294,9 +291,9 @@ st.markdown(
         "Duyệt bài viết",
         "Tìm và đọc các bài viết AI theo thời gian, nguồn, nhãn và từ khóa.",
         [
-            neutral_chip(f"{compact_number(total)} bài", "🧾", "slate"),
-            neutral_chip(f"Trang {cur_page}/{total_pages}", "📄", "blue"),
-            neutral_chip(f"{page_size}/trang", "▦", "green"),
+            neutral_chip(f"{compact_number(total)} bài", tone="slate"),
+            neutral_chip(f"Trang {cur_page}/{total_pages}", tone="blue"),
+            neutral_chip(f"{page_size}/trang", tone="green"),
         ],
     ),
     unsafe_allow_html=True,
@@ -404,14 +401,14 @@ st.markdown(
 toolbar_cols = st.columns([2.2, 1.1])
 with toolbar_cols[0]:
     chips = [
-        neutral_chip(f"{compact_number(total)} bài viết", "🧾", "slate"),
-        neutral_chip(f"Trang {cur_page}/{total_pages}", "📄", "blue"),
-        neutral_chip(f"{page_size}/trang", "▦", "green"),
+        neutral_chip(f"{compact_number(total)} bài viết", tone="slate"),
+        neutral_chip(f"Trang {cur_page}/{total_pages}", tone="blue"),
+        neutral_chip(f"{page_size}/trang", tone="green"),
     ]
     if search_query:
-        chips.append(neutral_chip(f'Từ khóa: "{search_query}"', "⌕", "amber"))
+        chips.append(neutral_chip(f'Từ khóa: "{search_query}"', tone="amber"))
     if filter_params.get("source"):
-        chips.append(neutral_chip(filter_params["source"], "🌐", "green"))
+        chips.append(neutral_chip(filter_params["source"], tone="green"))
     if filter_params.get("label"):
         chips.append(label_chip(filter_params["label"], LABEL_COLORS))
     st.markdown(f'<div class="meta-row">{"".join(chips)}</div>', unsafe_allow_html=True)
@@ -423,7 +420,7 @@ st.markdown(section_header("Danh sách bài viết", "Chọn bài để đọc c
 
 def build_card(article: dict) -> str:
     article_id = quote(str(article.get("id") or ""), safe="")
-    title = escape_html(article.get("title", "—"))
+    title = escape_html(clean_display_text(article.get("title"), "Không có tiêu đề"))
     preview = trim_text(article.get("summary") or article.get("snippet") or "", 240)
     preview_html = escape_html(preview or "Không có tóm tắt.")
     keywords_html = (

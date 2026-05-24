@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import re
+import string
+import unicodedata
 from datetime import datetime
 from html import escape
 from typing import Iterable, Mapping
@@ -28,24 +30,11 @@ LABEL_VI = {
     "NOISE": "Nhiễu",
 }
 
-LABEL_ICONS = {
-    "MARKET SIGNALS": "📈",
-    "SOLUTIONS & USE CASES": "🛠️",
-    "DEEP DIVE": "🔬",
-    "NOISE": "🔇",
-}
-
 LABEL_COLORS = {
     "MARKET SIGNALS": "#ef4444",
     "SOLUTIONS & USE CASES": "#16a34a",
     "DEEP DIVE": "#2563eb",
     "NOISE": "#64748b",
-}
-
-CONFIDENCE_META = {
-    "high": ("Cao", "#16a34a", "●"),
-    "medium": ("Trung bình", "#d97706", "●"),
-    "low": ("Thấp", "#dc2626", "●"),
 }
 
 DATE_FORMATS = (
@@ -725,12 +714,49 @@ def render_sidebar(active_page: str, api_url: str = "", api_online: bool | None 
             unsafe_allow_html=True,
         )
         st.divider()
-        st.page_link("app.py", label="Dashboard", icon="📊")
-        st.page_link("pages/1_Tin_Tức.py", label="Tin tức", icon="📰")
+        st.page_link("app.py", label="Dashboard")
+        st.page_link("pages/1_Tin_Tức.py", label="Tin tức")
 
 
 def escape_html(value: object) -> str:
-    return escape(str(value or ""), quote=True)
+    return escape(clean_display_text(value), quote=True)
+
+
+def looks_corrupted_text(value: object) -> bool:
+    text = str(value or "").strip()
+    if not text:
+        return False
+
+    sample = text[:4000]
+    length = len(sample)
+    bad_chars = sum(
+        1
+        for char in sample
+        if char == "\ufffd"
+        or (unicodedata.category(char)[0] == "C" and char not in {"\n", "\r", "\t"})
+    )
+    if bad_chars >= 3 or bad_chars / max(length, 1) > 0.025:
+        return True
+
+    if length >= 40:
+        readable = sum(1 for char in sample if char.isalnum() or char.isspace())
+        ascii_symbols = sum(1 for char in sample if char in string.punctuation)
+        unreadable_ratio = 1 - ((readable + ascii_symbols) / length)
+        if unreadable_ratio > 0.28 and readable / length < 0.55:
+            return True
+
+    return False
+
+
+def clean_display_text(value: object, fallback: str = "") -> str:
+    if value is None:
+        return fallback
+
+    text = str(value).replace("\x00", "").strip()
+    if not text or looks_corrupted_text(text):
+        return fallback
+
+    return text
 
 
 def css_color(value: str | None, fallback: str = "#64748b") -> str:
@@ -759,7 +785,7 @@ def percent_text(part: object, total: object) -> str:
 
 
 def trim_text(value: object, limit: int = 240) -> str:
-    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    text = re.sub(r"\s+", " ", clean_display_text(value)).strip()
     if len(text) <= limit:
         return text
     cut = text[:limit].rsplit(" ", 1)[0].rstrip(".,;: ")
@@ -861,7 +887,7 @@ def render_global_filter_bar(labels: list[str], sources: list[str]) -> None:
             "Nhãn",
             options=label_options,
             key="global_label",
-            format_func=lambda value: "Tất cả nhãn" if value == ALL_OPTION else f"{label_icon(value)} {label_name(value)}",
+            format_func=lambda value: "Tất cả nhãn" if value == ALL_OPTION else label_name(value),
         )
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -882,12 +908,12 @@ def label_color(label: str, colors: Mapping[str, str] | None = None) -> str:
 
 
 def label_icon(label: str) -> str:
-    return LABEL_ICONS.get(label, "•")
+    return ""
 
 
 def label_chip(label: str, colors: Mapping[str, str] | None = None) -> str:
     color = label_color(label, colors)
-    text = f"{label_icon(label)} {label_name(label)}"
+    text = label_name(label)
     return (
         f'<span class="ai-chip" style="--chip-bg:{color};'
         f'--chip-color:#fff;--chip-border:{color};">{escape_html(text)}</span>'
@@ -903,7 +929,7 @@ def neutral_chip(text: object, icon: str = "", tone: str = "slate") -> str:
         "slate": ("#f8fafc", "#334155", "#dbe3ef"),
     }
     bg, color, border = tones.get(tone, tones["slate"])
-    value = f"{icon} {text}".strip()
+    value = str(text or "").strip()
     return (
         f'<span class="ai-chip" style="--chip-bg:{bg};'
         f'--chip-color:{color};--chip-border:{border};">{escape_html(value)}</span>'
@@ -911,9 +937,7 @@ def neutral_chip(text: object, icon: str = "", tone: str = "slate") -> str:
 
 
 def confidence_chip(confidence: str) -> str:
-    key = str(confidence or "").strip().lower()
-    label, color, icon = CONFIDENCE_META.get(key, ("Không rõ", "#64748b", "●"))
-    return neutral_chip(f"{icon} Tin cậy {label}", tone="green" if key == "high" else "amber" if key == "medium" else "red" if key == "low" else "slate")
+    return ""
 
 
 def keyword_chips(keywords: str | Iterable[str], limit: int = 8) -> str:
@@ -922,7 +946,11 @@ def keyword_chips(keywords: str | Iterable[str], limit: int = 8) -> str:
     else:
         raw_items = list(keywords or [])
 
-    items = [str(item).strip() for item in raw_items if str(item).strip()]
+    items = []
+    for item in raw_items:
+        cleaned = clean_display_text(item).strip()
+        if cleaned:
+            items.append(cleaned)
     if not items:
         return ""
 
@@ -938,17 +966,14 @@ def keyword_chips(keywords: str | Iterable[str], limit: int = 8) -> str:
 
 def article_meta_html(article: Mapping[str, object], colors: Mapping[str, str] | None = None) -> str:
     chips = [label_chip(str(article.get("label") or ""), colors)]
-    confidence = str(article.get("confidence") or "").strip()
-    if confidence:
-        chips.append(confidence_chip(confidence))
 
-    source = str(article.get("source") or "").strip()
+    source = clean_display_text(article.get("source")).strip()
     if source:
-        chips.append(neutral_chip(source, "🌐", "slate"))
+        chips.append(neutral_chip(source, tone="slate"))
 
     pub_date = format_date(article.get("pub_date"))
     if pub_date:
-        chips.append(neutral_chip(pub_date, "📅", "slate"))
+        chips.append(neutral_chip(pub_date, tone="slate"))
 
     return f'<div class="meta-row">{"".join(chips)}</div>'
 
@@ -964,6 +989,7 @@ def metric_card(
     delta_tone: str = "neutral",
 ) -> str:
     safe_color = css_color(color, "#2563eb")
+    icon_html = f'<span class="metric-card__icon">{escape_html(icon)}</span>' if icon else ""
     delta_colors = {
         "up": ("#ecfdf5", "#047857"),
         "down": ("#fef2f2", "#b91c1c"),
@@ -979,7 +1005,7 @@ def metric_card(
     return f"""
     <div class="metric-card" style="--accent:{safe_color};--accent-soft:{safe_color}18;"{tooltip_attr}>
         <div class="metric-card__top">
-            <span class="metric-card__icon">{escape_html(icon)}</span>
+            {icon_html}
             <span>{escape_html(title)}</span>
         </div>
         <div class="metric-card__value">{escape_html(value)}</div>
