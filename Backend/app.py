@@ -225,6 +225,10 @@ def _count_delta(current: int, previous: int | None) -> dict:
     return {"value": diff, "percent": percent}
 
 
+def _append_where(where: str, condition: str) -> str:
+    return f"{where} AND {condition}" if where else f"WHERE {condition}"
+
+
 
 
 # ── Endpoints ──────────────────────────────────────────────────────────────────
@@ -395,10 +399,13 @@ def articles():
     )
 
     try:
+        list_where = _append_where(where, "s.summary IS NOT NULL AND TRIM(s.summary) != ''")
+
         count_rows = run_query(f"""
             SELECT COUNT(*) AS total
             FROM   {tbl(BQ_LABELED)} l
-            {where}
+            JOIN   {tbl(BQ_SUMMARY)} s ON l.link = s.link
+            {list_where}
         """)
         total = count_rows[0].total
 
@@ -415,8 +422,8 @@ def articles():
                 s.summary,
                 s.keywords
             FROM {tbl(BQ_LABELED)} l
-            LEFT JOIN {tbl(BQ_SUMMARY)} s ON l.link = s.link
-            {where}
+            JOIN {tbl(BQ_SUMMARY)} s ON l.link = s.link
+            {list_where}
             ORDER BY l.labeled_at DESC
             LIMIT  {limit}
             OFFSET {offset}

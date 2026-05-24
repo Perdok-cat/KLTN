@@ -169,7 +169,11 @@ label_colors = data.get("label_colors", {}) or {}
 total = int(data.get("total", 0) or 0)
 source_count = int(data.get("source_count", 0) or 0)
 recent_count = int(data.get("recent_count", 0) or 0)
-recent_articles = recent_result.get("articles", []) or []
+recent_articles = [
+    article
+    for article in (recent_result.get("articles", []) or [])
+    if clean_display_text(article.get("summary")).strip()
+]
 last_updated = format_datetime(data.get("last_updated")) or "Chưa có dữ liệu"
 date_label = DATE_RANGE_LABELS.get(params.get("date_range", "all"), "Tất cả thời gian")
 
@@ -357,7 +361,7 @@ if recent_articles:
     st.markdown('<div class="article-list">', unsafe_allow_html=True)
     for idx, article in enumerate(recent_articles):
         article_id = str(article.get("id") or f"article_{idx}")
-        preview = trim_text(article.get("summary") or article.get("snippet") or "", 220)
+        preview = trim_text(article.get("summary"), 220)
         title = clean_display_text(article.get("title"), "Không có tiêu đề")
         row_cols = st.columns([5.5, 1.25])
         with row_cols[0]:
@@ -367,7 +371,7 @@ if recent_articles:
                     <div>
                         {article_meta_html(article, label_colors)}
                         <div class="article-row__title">{escape_html(title)}</div>
-                        <div class="article-row__preview">{escape_html(preview or "Không có tóm tắt.")}</div>
+                        <div class="article-row__preview">{escape_html(preview)}</div>
                     </div>
                 </div>
                 """,

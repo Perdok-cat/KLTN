@@ -280,7 +280,11 @@ except Exception as exc:
     st.error(f"Không tải được dữ liệu: {exc}")
     st.stop()
 
-articles = result.get("articles", []) or []
+articles = [
+    article
+    for article in (result.get("articles", []) or [])
+    if clean_display_text(article.get("summary")).strip()
+]
 total = int(result.get("total", 0) or 0)
 cur_page = int(result.get("page", 1) or 1)
 total_pages = max(1, -(-total // page_size))
@@ -421,8 +425,8 @@ st.markdown(section_header("Danh sách bài viết", "Chọn bài để đọc c
 def build_card(article: dict) -> str:
     article_id = quote(str(article.get("id") or ""), safe="")
     title = escape_html(clean_display_text(article.get("title"), "Không có tiêu đề"))
-    preview = trim_text(article.get("summary") or article.get("snippet") or "", 240)
-    preview_html = escape_html(preview or "Không có tóm tắt.")
+    preview = trim_text(article.get("summary"), 240)
+    preview_html = escape_html(preview)
     keywords_html = (
         keyword_chips(article["keywords"], limit=5)
         if article.get("keywords")

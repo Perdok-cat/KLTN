@@ -1002,17 +1002,17 @@ def metric_card(
         else ""
     )
     tooltip_attr = f' title="{escape_html(tooltip)}"' if tooltip else ""
-    return f"""
-    <div class="metric-card" style="--accent:{safe_color};--accent-soft:{safe_color}18;"{tooltip_attr}>
-        <div class="metric-card__top">
-            {icon_html}
-            <span>{escape_html(title)}</span>
-        </div>
-        <div class="metric-card__value">{escape_html(value)}</div>
-        <div class="metric-card__detail">{escape_html(detail)}</div>
-        {delta_html}
-    </div>
-    """
+    return (
+        f'<div class="metric-card" style="--accent:{safe_color};--accent-soft:{safe_color}18;"{tooltip_attr}>'
+        '<div class="metric-card__top">'
+        f'{icon_html}'
+        f'<span>{escape_html(title)}</span>'
+        '</div>'
+        f'<div class="metric-card__value">{escape_html(value)}</div>'
+        f'<div class="metric-card__detail">{escape_html(detail)}</div>'
+        f'{delta_html}'
+        '</div>'
+    )
 
 
 def section_header(title: str, subtitle: str = "") -> str:
