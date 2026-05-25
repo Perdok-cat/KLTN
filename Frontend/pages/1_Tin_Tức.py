@@ -439,7 +439,7 @@ def build_card(article: dict) -> str:
         f'<div class="news-card__preview">{preview_html}</div>'
         f'{keywords_html}'
         '<div class="news-card__footer">'
-        f'<a class="read-link" href="?article_id={escape_html(article_id)}">Mở chi tiết</a>'
+        f'<a class="read-link" href="?article_id={escape_html(article_id)}" target="_self">Mở chi tiết</a>'
         '</div>'
         '</div>'
     )
