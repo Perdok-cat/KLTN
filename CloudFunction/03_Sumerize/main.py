@@ -41,8 +41,14 @@ MAX_ARTICLES_PER_RUN = int(os.environ.get("MAX_ARTICLES_PER_RUN", "50"))
 GEMINI_DELAY         = float(os.environ.get("GEMINI_DELAY",         "7"))
 MAX_RETRIES          = int(os.environ.get("MAX_RETRIES",            "3"))
 MAX_CONTENT_CHARS    = int(os.environ.get("MAX_CONTENT_CHARS",      "12000"))
-INPUT_TOKEN_PRICE_USD_PER_1K = float(os.environ.get("INPUT_TOKEN_PRICE_USD_PER_1K", "0"))
-OUTPUT_TOKEN_PRICE_USD_PER_1K = float(os.environ.get("OUTPUT_TOKEN_PRICE_USD_PER_1K", "0"))
+
+# Gemini 2.5 Flash market prices per 1K tokens.
+# Thinking is explicitly disabled in _build_generation_config(), so output uses
+# the standard price. Keep the deep-reasoning price here for easy switching if
+# thinking mode is enabled later.
+INPUT_TOKEN_PRICE_USD_PER_1K = 0.15
+OUTPUT_TOKEN_PRICE_USD_PER_1K = 0.60
+OUTPUT_TOKEN_PRICE_WITH_THINKING_USD_PER_1K = 3.50
 
 SKIP_LABELS = {"NOISE"}
 LLM_RUNTIME_NAME = "summarize_articles"
