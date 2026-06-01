@@ -252,9 +252,9 @@ def fmt_float(value: object, digits: int = 1) -> str:
 
 def fmt_currency(value: object) -> str:
     try:
-        return f"${float(value):,.4f}"
+        return f"${float(value):,.6f}"
     except (TypeError, ValueError):
-        return "$0.0000"
+        return "$0.000000"
 
 
 def provider_label(provider: str, use_vertex: bool) -> str:
@@ -357,7 +357,7 @@ def build_trend_chart(timeseries: list[dict]) -> go.Figure:
             marker=dict(size=7, color="#d97706"),
             fill="tozeroy",
             fillcolor="rgba(217, 119, 6, 0.10)",
-            hovertemplate="<b>%{x}</b><br>Cost: $%{y:.4f}<extra></extra>",
+            hovertemplate="<b>%{x}</b><br>Cost: $%{y:.6f}<extra></extra>",
         ),
         row=3,
         col=1,

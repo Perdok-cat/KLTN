@@ -219,3 +219,4 @@ flowchart LR
 - `hitl_reviews.article_id` la khoa chinh logic vi backend dung `MERGE` theo `article_id`, nen moi bai co mot ban review hien hanh.
 - `hitl_staging_data` la bang staging cho retraining, khong phai bang review goc. Trang thai da dua vao training duoc danh dau lai tren `hitl_reviews.is_used_for_retraining`.
 - `training_metadata` khong lien ket tung row training. Bang nay luu metadata theo job, gom accuracy, best model, so dong original/HITL va resource name tren Vertex AI.
+trường

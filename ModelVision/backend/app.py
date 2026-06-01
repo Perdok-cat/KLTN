@@ -26,6 +26,11 @@ BQ_ORIGINAL      = os.getenv("BQ_ORIGINAL_TABLE", "original_training_data")
 BQ_METADATA      = os.getenv("BQ_METADATA_TABLE", "training_metadata")
 BQ_LLM_USAGE     = os.getenv("BQ_LLM_USAGE_TABLE", "llm_usage_log")
 
+# Gemini 2.5 Flash market prices used for dashboard-side cost estimation.
+# Thinking is disabled in the summarize runtime, so output uses the standard price.
+LLM_INPUT_TOKEN_PRICE_USD_PER_1K = 0.15
+LLM_OUTPUT_TOKEN_PRICE_USD_PER_1K = 0.60
+
 HITL_PREPROCESS_CF_URL  = os.getenv("HITL_PREPROCESS_CF_URL",  "")
 TRIGGER_TRAINING_CF_URL = os.getenv("TRIGGER_TRAINING_CF_URL", "")
 HITL_BATCH_THRESHOLD    = int(os.getenv("HITL_BATCH_THRESHOLD", "10"))
@@ -131,6 +136,21 @@ def _empty_llm_payload(range_key: str, runtime: str) -> dict:
         "error_breakdown": [],
         "recent_logs": [],
     }
+
+
+def _llm_cost_sql() -> str:
+    return (
+        f"((COALESCE(input_tokens, 0) / 1000.0) * {LLM_INPUT_TOKEN_PRICE_USD_PER_1K} + "
+        f"(COALESCE(output_tokens, 0) / 1000.0) * {LLM_OUTPUT_TOKEN_PRICE_USD_PER_1K})"
+    )
+
+
+def _llm_cost_usd(input_tokens: int, output_tokens: int) -> float:
+    return round(
+        (int(input_tokens or 0) / 1000.0) * LLM_INPUT_TOKEN_PRICE_USD_PER_1K
+        + (int(output_tokens or 0) / 1000.0) * LLM_OUTPUT_TOKEN_PRICE_USD_PER_1K,
+        6,
+    )
 
 
 # ── Simple TTL cache ───────────────────────────────────────────────────────────
@@ -249,6 +269,7 @@ def llm_overview():
     runtime = request.args.get("runtime", "summarize_articles").strip() or "summarize_articles"
     range_key, start_expr, bucket_unit = _parse_range(request.args.get("range", "24h"))
     bucket_expr = f"TIMESTAMP_TRUNC(started_at, {bucket_unit})"
+    cost_expr = _llm_cost_sql()
 
     try:
         summary_rows = run_query(f"""
@@ -260,7 +281,7 @@ def llm_overview():
                 COALESCE(SUM(output_tokens), 0) AS output_tokens,
                 COALESCE(SUM(total_tokens), 0) AS total_tokens,
                 COALESCE(AVG(latency_ms), 0) AS avg_latency_ms,
-                COALESCE(SUM(cost_estimate_usd), 0) AS total_cost_usd
+                COALESCE(SUM({cost_expr}), 0) AS total_cost_usd
             FROM {ml_tbl(BQ_LLM_USAGE)}
             WHERE runtime_name = '{_escape(runtime)}'
               AND started_at >= {start_expr}
@@ -287,7 +308,7 @@ def llm_overview():
                 CAST({bucket_expr} AS STRING) AS bucket,
                 COUNT(*) AS requests,
                 COALESCE(SUM(total_tokens), 0) AS total_tokens,
-                COALESCE(SUM(cost_estimate_usd), 0) AS total_cost_usd,
+                COALESCE(SUM({cost_expr}), 0) AS total_cost_usd,
                 COUNTIF(NOT success) AS error_count
             FROM {ml_tbl(BQ_LLM_USAGE)}
             WHERE runtime_name = '{_escape(runtime)}'
@@ -312,11 +333,12 @@ def llm_overview():
                 provider,
                 model_name,
                 total_tokens,
+                input_tokens,
+                output_tokens,
                 latency_ms,
                 success,
                 COALESCE(NULLIF(error_type, ''), '—') AS error_type,
-                token_source,
-                cost_estimate_usd
+                token_source
             FROM {ml_tbl(BQ_LLM_USAGE)}
             WHERE runtime_name = '{_escape(runtime)}'
             ORDER BY started_at DESC
@@ -345,8 +367,8 @@ def llm_overview():
         "max_retries": int(latest.max_retries or 0) if latest else 0,
         "max_content_chars": int(latest.max_content_chars or 0) if latest else 0,
         "gemini_delay": float(latest.gemini_delay or 0) if latest else 0.0,
-        "input_token_price_usd_per_1k": float(latest.input_token_price_usd_per_1k or 0) if latest else 0.0,
-        "output_token_price_usd_per_1k": float(latest.output_token_price_usd_per_1k or 0) if latest else 0.0,
+        "input_token_price_usd_per_1k": LLM_INPUT_TOKEN_PRICE_USD_PER_1K,
+        "output_token_price_usd_per_1k": LLM_OUTPUT_TOKEN_PRICE_USD_PER_1K,
     }
     payload["kpis"] = {
         "total_requests": total_requests,
@@ -384,7 +406,7 @@ def llm_overview():
             "success": bool(r.success),
             "error_type": r.error_type,
             "token_source": r.token_source,
-            "cost_estimate_usd": float(r.cost_estimate_usd or 0),
+            "cost_estimate_usd": _llm_cost_usd(r.input_tokens or 0, r.output_tokens or 0),
         }
         for r in recent_rows
     ]
